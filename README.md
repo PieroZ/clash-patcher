@@ -1,5 +1,10 @@
 # Clash – konfigurator pliku .exe
 
+<img width="961" height="288" alt="Poprawki" src="https://github.com/user-attachments/assets/028c7666-b1b0-4882-9424-75e23c323a4b" />
+<img width="902" height="792" alt="KuzniaWarsztatPoziomy" src="https://github.com/user-attachments/assets/797cfc1e-9ace-4ef8-817e-a5b58486003d" />
+<img width="902" height="792" alt="SwiatyniaPort" src="https://github.com/user-attachments/assets/862baa32-1171-4fb3-9f31-eb832b57a8b4" />
+
+
 Narzędzie z interfejsem graficznym (PySide6) do zmiany ustawień zaszytych w pliku wykonywalnym gry
 Clash (LONGSOFT) – bez ręcznego grzebania w edytorze hex.
 
@@ -26,7 +31,7 @@ Obsługiwane wersje (rozpoznawane po rozmiarze pliku):
 python -m venv venv
 venv\Scripts\activate
 pip install -r requirements.txt
-python clash_exe_config.py "C:\Games\Clash\Clash\LONGSOFT\CLASH\CLASH.EXE"
+python clash_exe_config.py %SCIEZKA_DO_PLIKU% (np. "C:\Games\Clash\LONGSOFT\CLASH\CLASH.EXE")
 ```
 
 Ścieżkę można pominąć i otworzyć plik przyciskiem „Otwórz”.
