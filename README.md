@@ -19,6 +19,7 @@ Obsługiwane wersje (rozpoznawane po rozmiarze pliku):
 
 - **Świątynia i port** – jakie jednostki można wylosować (także wariant świątyni z wybranych misji).
 - **Kuźnia, warsztat, poziomy** – które jednostki wymagają kuźni / warsztatu i jaki minimalny poziom zamku.
+- **Mury** – koszt (0–255 sztuk złota) i czas (1–255 tur) rozbudowy muru do 2. i 3. poziomu.
 - **Punkty akcji** – koszt i wymagane minimum PA przy dzieleniu i łączeniu oddziałów.
 - **Walka** – premia za okopanie (oryginalne ×1,25 albo stałe +N).
 - **Poprawki** – poprawki błędów gry, np. blokada exploita z dołączaniem jednostek naziemnych

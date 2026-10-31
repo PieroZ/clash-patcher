@@ -25,6 +25,8 @@ Przy otwarciu każde znalezisko jest sprawdzane – jeśli bajty pod adresem nie
 | Kuźnia, warsztat, poziomy | Jednostki wymagające kuźni (bajty, koniec FF) | 0x161F7C | 0x113E80 |
 | | Jednostki wymagające warsztatu | 0x161F88 | 0x113E90 |
 | | Minimalny poziom: rekord typu jednostki + 0x4C / + 0x4B | 0x15E7D4 + ID×0x58 | 0x110768 + ID×0x58 |
+| Mury | Czas rozbudowy muru do 2. i 3. poziomu (bajty +2 wpisów 1 i 2 tabeli murów) | 0x15FDDE, 0x15FDE2 | szukane po bajtach |
+| | Koszt rozbudowy muru do 2. i 3. poziomu (bajty +3 tych samych wpisów) | 0x15FDDF, 0x15FDE3 | szukane po bajtach |
 | Punkty akcji | Koszt dzielenia (+ 2 warunki minimum) | 0x74DAD, 0x74A48, 0x74A9F | 0x225F2, 0x2239A, 0x223D2 |
 | | Koszt łączenia (+ warunek minimum) | 0x7485E, 0x74851 | 0x22142, 0x22126 |
 | Walka | Okopanie: oryginalnie obrona × 1,25, po zmianie obrona + N (kod `add …, N` + skok) | 0x5FE74, 0x5FF29 | 0x105DC |
@@ -41,6 +43,8 @@ Wystarczy dopisać wpis jednego z gotowych rodzajów:
 - `UnitDwordList(klucz, tytuł, offset, liczba_pozycji, Instr(adres_instrukcji, "BA"))` – lista ID po 4 bajty z losowaniem,
 - `UnitByteSet(klucz, tytuł, offset, pojemność_w_bajtach)` – lista ID po 1 bajcie zakończona FF,
 - `LinkedValue(klucz, tytuł, [Instr(...), ...], min, max)` – jedna liczba wpisana w kilka instrukcji,
+- `WallTable(klucz, tytuł, offset | None)` – tabela murów; `None` = program sam jej szuka
+  po bajtach rozpoznawczych (zakładka „Mury”),
 - `TechTable`, `CheatTable` – jak w istniejących wpisach,
 - `CodePatch(klucz, tytuł, [(offset, oryginał_hex | None, nowe_hex), ...], description=…)` – poprawka kodu
   włączana jednym przełącznikiem (zakładka „Poprawki”); `None` = w oryginale same zera (wolne miejsce na nowy kod),
@@ -63,6 +67,50 @@ minimum PA, więc warunek „PA ≥ N” zawsze zawodzi, niezależnie od ustawio
 W wersji DOS kod czyta adresy zmiennych gry z operandów istniejących instrukcji (0x2AC03, 0x2AC31, 0x2AC45),
 bo DOS/4GW relokuje dane, a nowy kod nie ma własnych wpisów relokacji. Źródło asemblerowe:
 `tools/build_nofly_patch.py` (wymaga `pip install keystone-engine`).
+
+## Mury – jak to działa w grze (DOS, Windows analogicznie)
+
+Mur ma trzy poziomy; gra pokazuje je graczowi jako 1–3 (`b+0x1a5` plus 1), zamek startuje na
+poziomie 0, twierdza na 1. Wszystkie dane murów leżą w jednej tabeli pod adresem `0x1339D8`
+w pamięci gry (**plik: 0x15FDD8** w wersji DOS) – trzy wpisy po 4 bajty:
+
+| Pole | Rozmiar | Znaczenie |
+|---|---|---|
+| +0 | u16 | wytrzymałość: mnożnik ×/256 obrażeń **zadawanych murom** (427, 341, 256 – im mniej, tym mocniejszy mur) |
+| +2 | u8 | liczba tur rozbudowy **do** tego poziomu |
+| +3 | u8 | koszt rozbudowy **do** tego poziomu w sztukach złota |
+
+Oryginalna zawartość: `AB 01 00 00 | 55 01 05 01 | 00 01 0A 01`.
+
+| Operacja | Funkcja | Co robi |
+|---|---|---|
+| Czy można rozbudować | `Building_CanUpgradeWall` 0x37952 | `poziom < 2` **i** `poziom < technologia−1` **i** licznik `b+0x1ad` == 0 |
+| Zlecenie rozbudowy | `Building_UpgradeWall` 0x379d4 | czyta wpis `poziom+1`: jeśli skarbiec ≥ koszt, to `b+0x1ad = tury` i `skarbiec −= koszt` |
+| Odliczanie | `Building_WallsTick` 0x36519 | raz na turę właściciela: `b+0x1ad −= 1`, a przy zerze `poziom += 1` |
+
+* Rozbudowa z poziomu L czyta wpis L+1, a poziom jest zawsze < 2, więc gra czyta tylko czas
+  i koszt wpisów 1 i 2 – **cztery bajty**. Czasu i kosztu wpisu 0 nie czyta nigdy (nie da się
+  „rozbudować do poziomu 0”), dlatego zakładka ich nie pokazuje.
+* Poziom 2. wymaga 2., a poziom 3. – 3. poziomu technologicznego zamku.
+* Koszt jest czytany jako bajt **bez znaku** i porównywany ze skarbcem też bez znaku, więc cały
+  zakres 0–255 działa poprawnie (200 nie zamienia się w liczbę ujemną dodającą złoto).
+* Licznik tur musi być ≥ 1. Przy 0 gra pobrałaby złoto, licznik od razu byłby zerowy, mur nigdy by
+  się nie podniósł, a „Rozbuduj mury” dalej byłoby aktywne – czyli studnia bez dna. Dlatego pole
+  czasu ma minimum 1.
+* Tych bajtów nie czyta żadne inne miejsce w kodzie (sprawdzone na deasemblacji), a `Building_UpgradeWall`
+  ma tylko dwóch wywołujących: `Castle_MenuUpgradeWalls` 0x39573 i `AI_CastleUpgradeWall` 0x708ac
+  (reguła AI `rozbudowa_murow`). Nowe wartości obowiązują więc i gracza, i komputer – komputer nie ma
+  tu zniżki, jaką ma na licencje i budynki.
+* Menu „Rozbuduj mury” **nie pokazuje ceny** (inaczej niż menu budowy, gdzie podpowiedzi typu
+  „400 sztuk zlota” są osobnymi tekstami w pliku), więc po zmianie ceny nigdzie w grze nie zostaje
+  stara liczba. Kliknięcie przy zbyt małym skarbcu po prostu nic nie robi, bez komunikatu – tak samo
+  jak w oryginale.
+* Wytrzymałości (pole +0) program nie zmienia; służą mu za znacznik rozpoznawczy tabeli.
+  W wersji Windows adres tabeli nie był sprawdzony na pliku, dlatego `WallTable` dostaje tam
+  `offset=None` i szuka jej po bajtach `AB 01 00 00 55 01 ?? ?? 00 01 ?? ??` (w pliku DOS taki wzór
+  występuje dokładnie raz). Gdy nie znajdzie albo znajdzie kilka miejsc, ustawienie się wyłącza.
+
+---
 
 ## Łączenie i dzielenie – jak to działa w grze (DOS, Windows analogicznie)
 

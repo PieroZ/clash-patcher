@@ -266,6 +266,103 @@ class TechTable:
             data[self.addr(uid, True)] = type2 & 0xFF
 
 
+class WallTable:
+    """Tabela murow (0x1339D8 w pamiesci gry) - 3 wpisy po 4 bajty:
+    {u16 wytrzymalosc x256, u8 tury rozbudowy, u8 koszt rozbudowy}.
+
+    Building_UpgradeWall (0x379D4) przy rozbudowie z poziomu L czyta wpis L+1, a poziom muru
+    jest zawsze < 2, wiec gra czyta tylko tury i koszt wpisow 1 i 2 (bajty +0x06/+0x07 i
+    +0x0A/+0x0B tabeli). Tury i koszt wpisu 0 nie sa czytane nigdy - nie da sie "rozbudowac
+    do poziomu 0". Poza ta jedna funkcja zadne inne miejsce w kodzie nie czyta tych bajtow,
+    a menu "Rozbuduj mury" (inaczej niz menu budowy) nie pokazuje ceny, wiec nie ma tekstu,
+    ktory trzeba by zmieniac razem z liczbami.
+
+    Koszt jest odczytywany jako bajt bez znaku i porownywany ze skarbcem zamku rowniez bez
+    znaku, wiec caly zakres 0-255 dziala poprawnie. Licznik tur (budynek +0x1AD) Building_WallsTick
+    (0x36519) zmniejsza o 1 na poczatku kazdej tury i podnosi poziom muru, gdy dojdzie do zera -
+    dlatego 0 tur nie ma sensu (zloto pobrane, licznik nigdy nie wystartuje).
+
+    Pole wytrzymalosci (427, 341, 256 - mnoznik obrazen zadawanych murom w bitwie) nie jest
+    zmieniane; sluzy za znacznik rozpoznawczy tabeli."""
+    kind = "wall_table"
+    LEVELS = 3
+    STRIDE = 4
+    # oryginal: AB 01 00 00 | 55 01 05 01 | 00 01 0A 01
+    # stale: trzy wytrzymalosci i zerowe tury/koszt wpisu 0; zmienne: tury i koszt wpisow 1 i 2
+    SIG_HEAD = bytes.fromhex("AB010000" "5501")   # caly wpis 0 + wytrzymalosc wpisu 1
+    SIG_TAIL_AT = 8
+    SIG_TAIL = bytes.fromhex("0001")              # wytrzymalosc wpisu 2
+    MIN_TURNS, MAX_TURNS = 1, 255
+    MIN_COST, MAX_COST = 0, 255
+    # wymagany poziom technologiczny zamku (Building_CanUpgradeWall: poziom muru < technologia - 1)
+    TECH_NEEDED = {1: 2, 2: 3}
+
+    def __init__(self, key, title, offset=None, note=""):
+        self.key, self.title, self.note = key, title, note
+        self.offset = offset       # None = szukaj tabeli po bajtach rozpoznawczych
+
+    @property
+    def size(self):
+        return self.LEVELS * self.STRIDE
+
+    def turns_offset(self, base, level):
+        return base + level * self.STRIDE + 2
+
+    def cost_offset(self, base, level):
+        return base + level * self.STRIDE + 3
+
+    def _fits(self, data, off):
+        tail = off + self.SIG_TAIL_AT
+        return (0 <= off and off + self.size <= len(data)
+                and bytes(data[off:off + len(self.SIG_HEAD)]) == self.SIG_HEAD
+                and bytes(data[tail:tail + len(self.SIG_TAIL)]) == self.SIG_TAIL)
+
+    def _scan(self, data):
+        found, i = [], data.find(self.SIG_HEAD)
+        while i >= 0:
+            if self._fits(data, i):
+                found.append(i)
+            i = data.find(self.SIG_HEAD, i + 1)
+        return found
+
+    def locate(self, data):
+        """Offset tabeli w pliku albo None, gdy jej tam nie ma."""
+        if self.offset is not None:
+            return self.offset if self._fits(data, self.offset) else None
+        found = self._scan(data)
+        return found[0] if len(found) == 1 else None
+
+    def check(self, data):
+        if self.offset is not None:
+            if not self._fits(data, self.offset):
+                got = bytes(data[self.offset:self.offset + self.size]).hex(" ").upper()
+                return f"0x{self.offset:X}: tabela murów nie wygląda jak w grze (jest {got})"
+            return None
+        found = self._scan(data)
+        if not found:
+            return "nie znaleziono tabeli murów (AB 01 00 00 55 01 .. .. 00 01 .. ..)"
+        if len(found) > 1:
+            return "bajty tabeli murów pasują do kilku miejsc: " + ", ".join(f"0x{o:X}" for o in found)
+        return None
+
+    def read(self, data):
+        off = self.locate(data)
+        val = {"offset": off, "strength": [], "turns": [], "cost": []}
+        for lvl in range(self.LEVELS):
+            val["strength"].append(struct.unpack_from("<H", data, off + lvl * self.STRIDE)[0])
+            val["turns"].append(data[self.turns_offset(off, lvl)])
+            val["cost"].append(data[self.cost_offset(off, lvl)])
+        return val
+
+    def write(self, data, val):
+        off = self.locate(data)
+        if off is None:
+            return
+        for lvl in range(1, self.LEVELS):      # wpis 0 nie jest przez gre czytany
+            data[self.turns_offset(off, lvl)] = max(self.MIN_TURNS, min(self.MAX_TURNS, val["turns"][lvl]))
+            data[self.cost_offset(off, lvl)] = max(self.MIN_COST, min(self.MAX_COST, val["cost"][lvl]))
+
+
 # znaki, ktore gra potrafi odczytac z klawiatury podczas wpisywania kodu
 CHEAT_CHARS = set("qwertyuiopasdfghjkl;'zxcvbnm,.1234567890-= ")
 
@@ -389,6 +486,9 @@ PROFILES = {
             UnitByteSet("forge", "Wymaga kuźni", 0x161F7C, 12),
             UnitByteSet("workshop", "Wymaga warsztatu", 0x161F88, 12),
             TechTable("tech", "Minimalny poziom zaawansowania", 0x15E7D4),
+            WallTable("walls", "Mury – koszt i czas rozbudowy", 0x15FDD8,
+                      note="Tabela 0x1339D8 w pamięci gry. Zmieniane są tylko cztery bajty: "
+                           "czas 0x15FDDE i 0x15FDE2, koszt 0x15FDDF i 0x15FDE3."),
             CostWithMinimum("ap_split", "Dzielenie oddziału / przenoszenie części jednostek",
                             Instr(0x74DAA, "806808"), [Instr(0x74A46, "83F8"), Instr(0x74A9D, "83F8")],
                             clamped=False),
@@ -430,6 +530,11 @@ PROFILES = {
             UnitByteSet("forge", "Wymaga kuźni", 0x113E80, 16),
             UnitByteSet("workshop", "Wymaga warsztatu", 0x113E90, 12),
             TechTable("tech", "Minimalny poziom zaawansowania", 0x110768),
+            WallTable("walls", "Mury – koszt i czas rozbudowy",
+                      note="Adres tabeli murów w wersji Windows nie był sprawdzony na pliku, dlatego program "
+                           "szuka jej po bajtach rozpoznawczych (AB 01 00 00 55 01 .. .. 00 01 .. ..) – "
+                           "wytrzymałości murów są w obu wersjach te same. Jeśli znajdzie więcej niż jedno "
+                           "takie miejsce, ustawienie zostaje wyłączone."),
             CostWithMinimum("ap_split", "Dzielenie oddziału / przenoszenie części jednostek",
                             Instr(0x225EF, "806808"), [Instr(0x22398, "83F8"), Instr(0x223D0, "83F8")],
                             clamped=False),

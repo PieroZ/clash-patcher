@@ -236,6 +236,129 @@ class ProductionTab(QWidget):
                              for uid in range(cp.UNIT_COUNT)})
 
 
+def turns_word(n):
+    """tura / tury / tur - zeby suffiks w polu liczbowym nie brzmial jak '1 tur'."""
+    if n == 1:
+        return "tura"
+    if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14):
+        return "tury"
+    return "tur"
+
+
+class WallsTab(QWidget):
+    """Mury: koszt i czas rozbudowy (tabela murow)."""
+    EDITABLE = (1, 2)      # poziomy, do ktorych da sie rozbudowac mur (gra pokazuje je jako 2 i 3)
+
+    def __init__(self, exe, on_change):
+        super().__init__()
+        self.ft = exe.features.get("walls")
+        self.on_change = on_change
+        self._loading = False
+        self.base = self.ft.locate(exe.data) if self.ft else None
+        self.turns, self.costs = {}, {}
+        lay = QVBoxLayout(self)
+        lay.addWidget(note_label(
+            "Mur ma trzy poziomy – gra pokazuje je jako 1, 2 i 3 (zamek zaczyna na 1., twierdza na 2.). "
+            "„Rozbuduj mury” w zamku podnosi mur o jeden poziom: gra pobiera koszt ze skarbca tego zamku "
+            "i ustawia licznik tur. Licznik spada o 1 na początku każdej tury właściciela zamku, a gdy dojdzie do zera, "
+            "poziom muru rośnie. Podczas trwającej rozbudowy nie można zlecić kolejnej, ale można ją zlecić "
+            "już w tej turze, w której poprzednia się skończyła. Oryginalnie czasy to 5 i 10 tur, a oba koszty "
+            "to 1 sztuka złota."))
+        box = QGroupBox("Rozbudowa murów")
+        bl = QVBoxLayout(box)
+        grid = QGridLayout()
+        for col, text in enumerate(("Rozbudowa", "Wymaga technologii", "Czas", "Koszt")):
+            head = QLabel(text)
+            head.setStyleSheet("font-weight: bold;")
+            grid.addWidget(head, 0, col)
+        for row, lvl in enumerate(self.EDITABLE, start=1):
+            grid.addWidget(QLabel(f"do {lvl + 1}. poziomu"), row, 0)
+            tech = QLabel(str(cp.WallTable.TECH_NEEDED[lvl]))
+            tech.setToolTip("Building_CanUpgradeWall: poziom muru musi być mniejszy niż technologia zamku − 1")
+            grid.addWidget(tech, row, 1)
+            t = QSpinBox()
+            t.setRange(cp.WallTable.MIN_TURNS, cp.WallTable.MAX_TURNS)
+            t.setSuffix(" tur")
+            t.setToolTip("Licznik tur zamku. Minimum to 1 – przy 0 gra pobrałaby złoto, licznik nigdy by nie "
+                         "wystartował i mur nigdy by się nie podniósł."
+                         + (f"\noffset 0x{self.ft.turns_offset(self.base, lvl):X}" if self.base is not None else ""))
+            c = QSpinBox()
+            c.setRange(cp.WallTable.MIN_COST, cp.WallTable.MAX_COST)
+            c.setSuffix(" szt. złota")
+            c.setToolTip("Koszt to jeden bajt bez znaku, więc maksimum to 255 sztuk złota."
+                         + (f"\noffset 0x{self.ft.cost_offset(self.base, lvl):X}" if self.base is not None else ""))
+            for sp in (t, c):
+                sp.setMinimumWidth(130)
+                sp.valueChanged.connect(self._changed)
+            grid.addWidget(t, row, 2)
+            grid.addWidget(c, row, 3)
+            self.turns[lvl], self.costs[lvl] = t, c
+        grid.setColumnStretch(4, 1)
+        bl.addLayout(grid)
+        self.summary = QLabel("")
+        self.summary.setWordWrap(True)
+        bl.addWidget(self.summary)
+        self.strength = note_label("")
+        bl.addWidget(self.strength)
+        if self.ft:
+            where = f"Tabela murów w pliku: 0x{self.base:X}. " if self.base is not None else ""
+            bl.addWidget(note_label(
+                where + "Czas i koszt czyta tylko funkcja rozbudowy murów (0x379D4), a wywołuje ją zarówno "
+                "menu zamku, jak i komputerowy przeciwnik (reguła „rozbudowa_murow”), więc nowe wartości "
+                "obowiązują też jego. Komputer nie ma tu zniżki, jaką ma na licencje i budynki, i próbuje "
+                "rozbudowy, gdy tylko może – przy wysokiej cenie będzie po prostu czekał, aż uzbiera złoto."
+                + (self.ft.note or "")))
+        else:
+            box.setEnabled(False)
+        lay.addWidget(box)
+        if not self.ft:
+            lay.addWidget(note_label("Niedostępne: " + exe.problems.get("walls", "brak w tej wersji gry")))
+        lay.addStretch(1)
+
+    def _update(self):
+        for lvl in self.EDITABLE:
+            sp = self.turns[lvl]
+            sp.setSuffix(" " + turns_word(sp.value()))
+        t = sum(self.turns[lvl].value() for lvl in self.EDITABLE)
+        g = sum(self.costs[lvl].value() for lvl in self.EDITABLE)
+        parts = ["Z 1. na 3. poziom muru: "
+                 + " + ".join(str(self.turns[lvl].value()) for lvl in self.EDITABLE)
+                 + f" = {t} {turns_word(t)} i "
+                 + " + ".join(str(self.costs[lvl].value()) for lvl in self.EDITABLE)
+                 + f" = {g} szt. złota (zamek potrzebuje do tego 3. poziomu technologicznego)."]
+        if any(self.costs[lvl].value() == 0 for lvl in self.EDITABLE):
+            parts.append("Koszt 0 oznacza rozbudowę za darmo.")
+        self.summary.setText(" ".join(parts))
+
+    def _changed(self, *_):
+        self._update()
+        if not self._loading:
+            self.on_change()
+
+    def load(self, exe):
+        if not self.ft:
+            return
+        self._loading = True
+        v = exe.get("walls")
+        for lvl in self.EDITABLE:
+            self.turns[lvl].setValue(v["turns"][lvl])
+            self.costs[lvl].setValue(v["cost"][lvl])
+        self.strength.setText(
+            "Wytrzymałość murów (mnożnik obrażeń zadawanych murom w bitwie, ×/256 – im mniej, tym mocniejszy mur): "
+            + ", ".join(f"{lvl + 1}. poziom {s}" for lvl, s in enumerate(v["strength"]))
+            + ". Tego pola tabeli program nie zmienia.")
+        self._loading = False
+        self._update()
+
+    def store(self, exe):
+        if not self.ft:
+            return
+        exe.set("walls", {
+            "turns": [0] + [self.turns[lvl].value() for lvl in self.EDITABLE],
+            "cost": [0] + [self.costs[lvl].value() for lvl in self.EDITABLE],
+        })
+
+
 class ValuesTab(QWidget):
     """Punkty akcji: koszt i wymagane minimum osobno."""
 
@@ -533,10 +656,10 @@ class MainWindow(QMainWindow):
         self.dirty = False
         self.tabs.clear()
         self.pages = [RandomUnitsTab(exe, self._mark), ProductionTab(exe, self._mark),
-                      ValuesTab(exe, self._mark), CombatTab(exe, self._mark), FixesTab(exe, self._mark),
-                      CheatsTab(exe, self._mark)]
-        titles = ["Świątynia i port", "Kuźnia, warsztat, poziomy", "Punkty akcji", "Walka", "Poprawki",
-                  "Kody"]
+                      WallsTab(exe, self._mark), ValuesTab(exe, self._mark), CombatTab(exe, self._mark),
+                      FixesTab(exe, self._mark), CheatsTab(exe, self._mark)]
+        titles = ["Świątynia i port", "Kuźnia, warsztat, poziomy", "Mury", "Punkty akcji", "Walka",
+                  "Poprawki", "Kody"]
         for page, title in zip(self.pages, titles):
             page.load(exe)
             self.tabs.addTab(page if isinstance(page, ProductionTab) else scrolled(page), title)
