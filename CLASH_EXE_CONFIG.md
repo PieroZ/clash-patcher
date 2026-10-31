@@ -21,6 +21,11 @@ Przy otwarciu każde znalezisko jest sprawdzane – jeśli bajty pod adresem nie
 |---|---|---|---|
 | Świątynia i port | Lista świątyni (5 × 4 B) + liczba losowanych pozycji | 0x161FFC, 0x94C42 | 0x113F10, 0x3F17E |
 | | Świątynia w wybranych misjach (7 × 4 B) | 0x162010, 0x94C14 | 0x113F24, 0x3F14A |
+| | Dary: świątynia – gracz (16 wpisów × 24 B) | 0x16203C | — |
+| | Dary: świątynia – komputer (14 wpisów) | 0x16233C | — |
+| | Dary: miejsce kultu – gracz (14 wpisów) | 0x1621D4 | — |
+| | Dary: miejsce kultu – komputer (12 wpisów) | 0x1624A4 | — |
+| | Siła darów: 17 liczb w kodzie (niżej) | 0x94B1F … 0x95499 | — |
 | | Port (12 × 4 B) | 0x163E0C, 0x9952B | 0x115DA8, 0x42B0A |
 | Kuźnia, warsztat, poziomy | Jednostki wymagające kuźni (bajty, koniec FF) | 0x161F7C | 0x113E80 |
 | | Jednostki wymagające warsztatu | 0x161F88 | 0x113E90 |
@@ -45,6 +50,10 @@ Wystarczy dopisać wpis jednego z gotowych rodzajów:
 - `LinkedValue(klucz, tytuł, [Instr(...), ...], min, max)` – jedna liczba wpisana w kilka instrukcji,
 - `WallTable(klucz, tytuł, offset | None)` – tabela murów; `None` = program sam jej szuka
   po bajtach rozpoznawczych (zakładka „Mury”),
+- `GiftTable(klucz, tytuł, offset, przesunięcie_tekstów, czy_gracz)` – tabela losowania darów
+  świątyni (zakładka „Świątynia i port”),
+- `GiftAmounts(klucz, tytuł, [GiftAmount(...), …])` – zbiór liczb wpisanych w kod, pokazywany
+  jako jedna lista; `GiftAmount` dostaje `Instr` (1 bajt) albo `Instr32` (4 bajty ze znakiem),
 - `TechTable`, `CheatTable` – jak w istniejących wpisach,
 - `CodePatch(klucz, tytuł, [(offset, oryginał_hex | None, nowe_hex), ...], description=…)` – poprawka kodu
   włączana jednym przełącznikiem (zakładka „Poprawki”); `None` = w oryginale same zera (wolne miejsce na nowy kod),
@@ -67,6 +76,106 @@ minimum PA, więc warunek „PA ≥ N” zawsze zawodzi, niezależnie od ustawio
 W wersji DOS kod czyta adresy zmiennych gry z operandów istniejących instrukcji (0x2AC03, 0x2AC31, 0x2AC45),
 bo DOS/4GW relokuje dane, a nowy kod nie ma własnych wpisów relokacji. Źródło asemblerowe:
 `tools/build_nofly_patch.py` (wymaga `pip install keystone-engine`).
+
+## Dary świątyń i miejsc kultu – jak to działa w grze (tylko DOS)
+
+Armia, która wejdzie na pole świątyni (religia chrześcijańska) albo miejsca kultu (pogańska),
+dostaje **jeden wylosowany dar**. Wejście do świątyni obcej religii zawsze kończy się zniszczeniem
+armii, a odwiedzona świątynia daje tylko komunikat. Cała obsługa to trzy rzeczy:
+
+| Co | Funkcja | Rola |
+|---|---|---|
+| Wybór tabeli | `Temple_UnitGetInto` 0x5C135 | po religii (`gracz+0x27`) i po tym, czy gracz jest człowiekiem (`+0x1B`) |
+| Losowanie wpisu | `Temple_Random` 0x5BC2C | ważone, z przesunięciem o jeden (niżej) |
+| Wykonanie efektu | `Temple_ProcessGift` 0x5BCDB | instrukcja wyboru z 16 przypadkami (numery darów 0–15) |
+
+### Cztery tabele
+
+Wpis ma 24 bajty: `{i32 numer daru, i32 waga, i32 obrazek, 3 × wskaźnik na tekst (PL, EN, DE)}`,
+a lista kończy się wpisem z numerem daru `-1`.
+
+| Tabela | Adres w pamięci | Offset w pliku | Wpisów | Suma wag |
+|---|---|---|---|---|
+| świątynia – gracz | 0x135C3C | **0x16203C** | 16 | 160 |
+| świątynia – komputer | 0x135F3C | **0x16233C** | 14 | 140 |
+| miejsce kultu – gracz | 0x135DD4 | **0x1621D4** | 14 | 140 |
+| miejsce kultu – komputer | 0x1360A4 | **0x1624A4** | 12 | 120 |
+
+Tabele leżą w pliku jedna za drugą, więc **liczby wpisów nie da się zmienić** bez przenoszenia
+tabel i dopisywania relokacji. Edytowalne są numer daru, obrazek i waga każdego istniejącego wpisu;
+waga 0 praktycznie wyłącza wpis.
+
+Tekstów program nie zmienia. Każdy wpis ma własne napisy o stałej długości, a numer daru nie ma
+z nimi nic wspólnego – po zmianie efektu komunikat w grze zostaje stary. Dlatego ostatnia kolumna
+tabeli pokazuje tekst, który gra naprawdę wypisze (czytany z pliku, kodowanie Mazovia; wskaźnik
+z wpisu + 0x13C400 = offset tekstu w pliku).
+
+Obrazek (pole +8) to numer klatki, a zarazem numer dźwięku
+(przy `-1` gra bierze dźwięk 7 i nie rysuje obrazka). Lista w programie podaje 0–21 i 24, bo
+tylko dla nich w grze są dźwięki; 23 to tło okienka daru (`S32_GetHeight(set, 0x17)`), a 22 nie ma
+ani dźwięku, ani znanego zastosowania. Klatka 18 (okuta tarcza z czaszką) istnieje, ale w oryginale
+nie jest używana.
+
+### Losowanie i dokładne szanse
+
+```
+S = suma wag
+r = Random(0, S-1)
+acc = 0; i = 0
+pętla: acc += waga[i]; jeśli acc >= r → wybrany jest wpis i; i++
+```
+
+`r = 0` zawsze trafia w pierwszy wpis, więc **pierwszy wpis ma o jedną szansę więcej**, niż wynika
+z jego wagi, a **ostatni o jedną mniej** (`r` nie dochodzi do `S`). Program liczy to dokładnie tym
+samym wzorem co gra – liczba szans wpisu *i* to
+`max(0, min(suma(0..i), S-1) − suma(0..i-1))`, plus 1 dla wpisu pierwszego – i pokazuje ją
+w kolumnie „Szansa”. (Sprawdzone przez porównanie z przejściem wszystkich wartości `r`.)
+
+**Pułapka w misjach 2, 6, 12 i 16.** Dla gracza-człowieka `Temple_UnitGetInto` losuje tam
+w pętli `while (dar != 0 && dar != 15)`, czyli do trafienia na „nowy oddział” albo „brak efektu”.
+Jeśli w tabeli gracza żaden **osiągalny** wpis (szansa > 0) nie ma daru 0 ani 15, pętla nigdy się
+nie skończy i gra się zawiesi. Program traktuje to jako błąd i nie pozwala zapisać takiego pliku.
+
+### Numery darów i liczby wpisane w kod
+
+`Temple_ProcessGift` nie czyta żadnej tabeli wartości – wszystkie liczby są operandami instrukcji.
+Te same liczby obowiązują gracza i komputer (oba przechodzą przez tę funkcję) oraz zakopane skarby,
+które korzystają z tych samych numerów darów.
+
+| Dar | Efekt | Liczba w kodzie (offset w pliku) | Oryginalnie | Zakres w programie |
+|---|---|---|---|---|
+| 0 | nowy oddział (losowe jednostki z list powyżej) | `Random(min,max)`: 0x94B24 / 0x94B1F | 1–5 | 1–10 |
+| 1 | grom – armia ginie | — | — | — |
+| 2 | usunięcie zmęczenia | zmęczenie 0x95162 | −100 | −100…100 |
+| 3 | wzrost morale (dar fabularny, tylko skarby) | morale 0x951A9 | +20 | −20…20 |
+| 4 | uzdrowienie | zdrowie := 0x9521B | 100 | 0–100 |
+| 5 | uzdrowienie i wypoczynek | zdrowie := 0x9528C, zmęczenie := 0x95297 | 100, 0 | 0–100 |
+| 6 | doświadczenie (więcej) | liczba nożyków 0x952E9 | 3 | 0–99 |
+| 7 | wzrost morale | morale 0x95331 | +2 | −20…20 |
+| 8 | doświadczenie (mniej) | liczba nożyków 0x95384 | 2 | 0–99 |
+| 9 | złoto | 0x953D5 | 100 | 1–1000 |
+| 10 | złoto | 0x953F2 | 200 | 1–1000 |
+| 11 | złoto | 0x9542C | 50 | 1–1000 |
+| 12 | złoto | 0x9540F | 300 | 1–1000 |
+| 13 | spadek morale | morale 0x95440 | −20 | −20…20 |
+| 14 | klątwa | morale 0x95487, zmęczenie 0x95499 | −1, +50 | −20…20, −100…100 |
+| 15 | brak efektu | — | — | — |
+
+Skąd te zakresy:
+
+* **Morale** mieści się w 0–20 (`SubUnit_AddMorale` 0x2899C dodaje do bajtu ze znakiem i przycina),
+  więc ±20 to cały sensowny zakres i nie ma ryzyka przepełnienia.
+* **Zmęczenie** mieści się w 0–100 (`SubUnit_AddTiredness` 0x2881D, tak samo). Dodanie więcej niż
+  **27** przekręca bajt ze znakiem jednostkom, które są już zmęczone, i przycięcie daje im 0 zamiast
+  100 – ten sam błąd ma oryginalna KSIĘGA PLAG z +50. Program o tym ostrzega, ale nie blokuje.
+* **Zdrowie i zmęczenie daru 5** są wpisywane wprost w pola jednostki (bez przycinania), więc 0–100.
+* **Złoto**: `Gift_Gold` 0x5B8CE tworzy oddział ze złotem po 100 sztuk na jednostkę, a oddział ma
+  najwyżej 10 jednostek – stąd maksimum 1000. Wartość 0 dałaby pusty oddział.
+* **Nożyki**: to liczba obrotów pętli `Unit_AddExperience`. 3 nożyki = 1 poziom, najwyższy poziom
+  to 3, więc 9 wystarcza, żeby jednostka bez doświadczenia od razu doszła na szczyt.
+* **Liczba jednostek** daru 0: bufor `Gift_NewTroops` i limit oddziału to 10 jednostek.
+
+---
 
 ## Mury – jak to działa w grze (DOS, Windows analogicznie)
 

@@ -5,6 +5,7 @@ Znaleziska (adresy, rodzaje danych) sa w clash_exe_patches.py.
 """
 import os
 import sys
+import textwrap
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -109,12 +110,335 @@ class DwordListBox(QGroupBox):
         self.on_change()
 
 
+def fit_table_height(table):
+    """Tabela pokazuje wszystkie wiersze naraz - przewija ja dopiero zakladka.
+    Bez gornego ograniczenia: gdy wyliczona wysokosc okaze sie za mala, zostanie puste miejsce,
+    a nie obciety wiersz."""
+    table.resizeRowsToContents()
+    h = table.horizontalHeader().height() + 2 * table.frameWidth() + 2
+    for r in range(table.rowCount()):
+        h += table.rowHeight(r)
+    table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    table.setMinimumHeight(h)
+
+
+def read_only_item(text=""):
+    item = QTableWidgetItem(text)
+    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+    return item
+
+
+def pct(part, total):
+    if total <= 0:
+        return "–"
+    return f"{100.0 * part / total:.1f}".replace(".", ",") + "%"
+
+
+class GiftTableBox(QWidget):
+    """Jedna z czterech tabel losowania darow: numer daru, przedmiot i waga kazdego wpisu."""
+    COL_NO, COL_GIFT, COL_SPRITE, COL_WEIGHT, COL_CHANCE, COL_TEXT = range(6)
+
+    def __init__(self, feature, entries, on_change):
+        super().__init__()
+        self.f = feature
+        self.on_change = on_change
+        self._loading = False
+        self.n = len(entries)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        self.table = QTableWidget(self.n, 6)
+        self.table.setHorizontalHeaderLabels(
+            ["#", "Dar – co się stanie", "Przedmiot (obrazek i dźwięk)", "Waga", "Szansa",
+             "Tekst w grze (polski)"])
+        self.table.verticalHeader().setVisible(False)
+        hh = self.table.horizontalHeader()
+        hh.setSectionResizeMode(self.COL_TEXT, QHeaderView.Stretch)
+        for c in (self.COL_NO, self.COL_GIFT, self.COL_SPRITE, self.COL_WEIGHT, self.COL_CHANCE):
+            hh.setSectionResizeMode(c, QHeaderView.ResizeToContents)
+        self.gifts, self.sprites, self.weights = [], [], []
+        for i in range(self.n):
+            off = feature.entry_offset(i)
+            num = read_only_item(str(i + 1))
+            num.setToolTip(f"offsety w pliku – dar 0x{off:X}, waga 0x{off + 4:X}, "
+                           f"obrazek 0x{off + 8:X}, wskaźniki tekstów 0x{off + 12:X}")
+            self.table.setItem(i, self.COL_NO, num)
+            cb_gift = QComboBox()
+            for gid in sorted(cp.GIFT_EFFECTS):
+                cb_gift.addItem(cp.gift_label(gid), gid)
+            cb_gift.setMinimumWidth(260)
+            cb_gift.currentIndexChanged.connect(self._changed)
+            self.table.setCellWidget(i, self.COL_GIFT, cb_gift)
+            self.gifts.append(cb_gift)
+            cb_spr = QComboBox()
+            for sid in sorted(cp.ARTEFACT_NAMES):
+                cb_spr.addItem(cp.artefact_label(sid), sid)
+            cb_spr.setMinimumWidth(240)
+            cb_spr.setToolTip("Obrazek z temple.s32 pokazywany w okienku i jednocześnie numer "
+                              "dźwięku sfx\\artefakt\\N.wav (przy „bez obrazka” gra odtwarza "
+                              "dźwięk 7 i nie rysuje nic).")
+            cb_spr.currentIndexChanged.connect(self._changed)
+            self.table.setCellWidget(i, self.COL_SPRITE, cb_spr)
+            self.sprites.append(cb_spr)
+            sp = QSpinBox()
+            sp.setRange(0, cp.GiftTable.MAX_WEIGHT)
+            sp.valueChanged.connect(self._changed)
+            self.table.setCellWidget(i, self.COL_WEIGHT, sp)
+            self.weights.append(sp)
+            self.table.setItem(i, self.COL_CHANCE, read_only_item())
+            self.table.setItem(i, self.COL_TEXT, read_only_item())
+        lay.addWidget(self.table)
+        self.summary = QLabel("")
+        self.summary.setWordWrap(True)
+        lay.addWidget(self.summary)
+        self.warn = QLabel("")
+        self.warn.setWordWrap(True)
+        self.warn.setStyleSheet("color: #c0392b;")
+        lay.addWidget(self.warn)
+
+    # --- dane
+    def load(self, entries):
+        self._loading = True
+        for i, e in enumerate(entries[:self.n]):
+            self.gifts[i].setCurrentIndex(self.gifts[i].findData(e["gift"]))
+            idx = self.sprites[i].findData(e["sprite"])
+            if idx < 0:                      # obrazek, ktorego nie ma na liscie - dopisz go
+                self.sprites[i].addItem(cp.artefact_label(e["sprite"]), e["sprite"])
+                idx = self.sprites[i].findData(e["sprite"])
+            self.sprites[i].setCurrentIndex(idx)
+            self.weights[i].setValue(e["weight"])
+            pl, en = e["texts"][0], e["texts"][1]
+            item = self.table.item(i, self.COL_TEXT)
+            item.setText(" ".join(pl.split())[:70])
+            # podpowiedzi Qt nie zawijaja zwyklego tekstu same - lamiemy go recznie
+            item.setToolTip("\n\n".join(textwrap.fill(" ".join(t.split()), 90)
+                                        for t in (pl, en) if t.strip()))
+        self._loading = False
+        self._update()
+
+    def value(self):
+        return [{"gift": self.gifts[i].currentData(),
+                 "sprite": self.sprites[i].currentData(),
+                 "weight": self.weights[i].value()} for i in range(self.n)]
+
+    def refresh_effects(self, amounts):
+        """Odswieza opisy darow po zmianie liczb w sekcji „Siła darów”."""
+        for cb in self.gifts:
+            for pos in range(cb.count()):
+                cb.setItemText(pos, cp.gift_label(cb.itemData(pos), amounts))
+
+    # --- liczenie szans i kontrola
+    def _update(self):
+        ws = [sp.value() for sp in self.weights]
+        total = sum(ws)
+        chances = cp.GiftTable.chances(ws)
+        for i, c in enumerate(chances):
+            self.table.item(i, self.COL_CHANCE).setText(f"{c} / {total} = {pct(c, total)}"
+                                                        if total else str(c))
+        self.summary.setText(
+            f"Suma wag: {total}. Gra losuje liczbę od 0 do {max(total - 1, 0)}, więc pierwszy wpis "
+            f"ma o jedną szansę więcej, niż wynika z jego wagi, a ostatni o jedną mniej.")
+        msgs, ok = [], True
+        if total <= 0:
+            msgs.append("Suma wag musi być większa od zera – przy zerze gra losuje z pustego "
+                        "zakresu i wynik jest nieprzewidywalny.")
+            ok = False
+        dead = [i + 1 for i, c in enumerate(chances) if c <= 0]
+        if dead:
+            msgs.append("Wpisy, których gra nigdy nie wylosuje: " + ", ".join(map(str, dead)) + ".")
+        if self.f.human and not self._has_reroll_gift(chances):
+            msgs.append("W misjach 2, 6, 12 i 16 gra losuje dla gracza tak długo, aż trafi na dar "
+                        "„nowy oddział” albo „brak efektu” – w tej tabeli żaden osiągalny wpis nie "
+                        "ma takiego daru, więc gra zawiesiłaby się w tych misjach.")
+            ok = False
+        self.warn.setText(" ".join(msgs))
+        return ok
+
+    def _has_reroll_gift(self, chances):
+        return any(self.gifts[i].currentData() in cp.GIFT_REROLL_OK and chances[i] > 0
+                   for i in range(self.n))
+
+    def valid(self):
+        return self._update()
+
+    def _changed(self, *_):
+        self._update()
+        if not self._loading:
+            self.on_change()
+
+
+class GiftsBox(QGroupBox):
+    """Cztery tabele darow w zagniezdzonych zakladkach."""
+
+    def __init__(self, exe, on_change):
+        super().__init__("Dary świątyń i miejsc kultu – co i jak często można wylosować")
+        self.boxes = {}
+        lay = QVBoxLayout(self)
+        lay.addWidget(note_label(cp.DESC_GIFTS))
+        lay.addWidget(note_label(
+            "Liczba wpisów jest stała – tabele leżą w pliku jedna za drugą, więc nie da się dopisać "
+            "nowej pozycji. Można jednak zmienić każdemu wpisowi dar (efekt), przedmiot i wagę, "
+            "a waga 0 praktycznie go wyłącza. Tekst, który gra pokaże, należy do wpisu i nie zmienia "
+            "się razem z darem: po zmianie efektu komunikat zostaje stary (ostatnia kolumna "
+            "pokazuje, co gra wypisze). Jednostki, które daje dar „nowy oddział”, ustawia się "
+            "w dwóch listach powyżej."))
+        self.tabs = QTabWidget()
+        for key in ("gifts_christian_human", "gifts_christian_ai",
+                    "gifts_pagan_human", "gifts_pagan_ai"):
+            ft = exe.features.get(key)
+            if not ft:
+                continue
+            box = GiftTableBox(ft, ft.read(exe.data), on_change)
+            self.tabs.addTab(box, ft.title)
+            self.boxes[key] = box
+        if self.boxes:
+            lay.addWidget(self.tabs)
+        else:
+            lay.addWidget(note_label("Niedostępne: " + "; ".join(
+                exe.problems.get(k, "brak w tej wersji gry") for k in
+                ("gifts_christian_human", "gifts_pagan_human"))))
+            self.setEnabled(False)
+
+    def load(self, exe):
+        for key, box in self.boxes.items():
+            box.load(exe.get(key))
+
+    def store(self, exe):
+        for key, box in self.boxes.items():
+            exe.set(key, box.value())
+
+    def refresh_effects(self, amounts):
+        for box in self.boxes.values():
+            box.refresh_effects(amounts)
+
+    def valid(self):
+        # bez skrotu logicznego - kazda zakladka ma odswiezyc swoje ostrzezenia
+        return all([box.valid() for box in self.boxes.values()])
+
+
+class GiftAmountsBox(QGroupBox):
+    """Sila darow - liczby wpisane w kod gry, wspolne dla wszystkich czterech tabel."""
+
+    def __init__(self, exe, on_change, on_amounts_changed):
+        super().__init__("Siła darów – ile dokładnie dają")
+        self.ft = exe.features.get("gift_amounts")
+        self.on_change = on_change
+        self.on_amounts_changed = on_amounts_changed
+        self._loading = False
+        self.spins = {}
+        lay = QVBoxLayout(self)
+        lay.addWidget(note_label(
+            "Te liczby gra ma wpisane wprost w kodzie, a nie w tabeli – są więc wspólne dla "
+            "świątyń, miejsc kultu i zakopanych skarbów, i obowiązują zarówno gracza, jak i "
+            "komputer. Dotyczą każdej jednostki armii, która weszła do świątyni (poza złotem, "
+            "chłopami i dowódcami, których gra pomija)."))
+        if not self.ft:
+            lay.addWidget(note_label("Niedostępne: " + exe.problems.get(
+                "gift_amounts", "w tej wersji gry nie są znane adresy tych liczb")))
+            self.setEnabled(False)
+            return
+        grid = QGridLayout()
+        for col, text in enumerate(("Dar", "Co robi", "Wartości")):
+            head = QLabel(text)
+            head.setStyleSheet("font-weight: bold;")
+            grid.addWidget(head, 0, col)
+        row = 1
+        for gid in sorted(cp.GIFT_EFFECTS):
+            amounts = self.ft.by_gift(gid)
+            name = cp.GIFT_EFFECTS[gid][0]
+            grid.addWidget(QLabel(f"{gid:02d}"), row, 0)
+            grid.addWidget(QLabel(name), row, 1)
+            if not amounts:
+                none = QLabel("—")
+                none.setToolTip("Ten dar nie ma w kodzie żadnej liczby do zmiany.")
+                grid.addWidget(none, row, 2)
+                row += 1
+                continue
+            cell = QWidget()
+            cl = QHBoxLayout(cell)
+            cl.setContentsMargins(0, 0, 0, 0)
+            for a in amounts:
+                cl.addWidget(QLabel(a.label + ":"))
+                sp = QSpinBox()
+                sp.setRange(a.lo, a.hi)
+                tip = f"offset 0x{a.instr.value_offset:X}, zakres {a.lo}–{a.hi}"
+                if a.note:
+                    tip = a.note + "\n" + tip
+                sp.setToolTip(tip)
+                sp.valueChanged.connect(self._changed)
+                cl.addWidget(sp)
+                self.spins[a.key] = sp
+            cl.addStretch(1)
+            grid.addWidget(cell, row, 2)
+            row += 1
+        grid.setColumnStretch(3, 1)
+        lay.addLayout(grid)
+        if self.ft.note:
+            lay.addWidget(note_label(self.ft.note))
+        self.warn = QLabel("")
+        self.warn.setWordWrap(True)
+        self.warn.setStyleSheet("color: #c0392b;")
+        lay.addWidget(self.warn)
+
+    def value(self):
+        return {k: sp.value() for k, sp in self.spins.items()}
+
+    def _validate(self):
+        if not self.ft:
+            return True
+        msgs, ok = [], True
+        lo, hi = self.spins.get("troops_min"), self.spins.get("troops_max")
+        if lo is not None and hi is not None and lo.value() > hi.value():
+            msgs.append("Dar „nowy oddział”: najmniejsza liczba jednostek jest większa od "
+                        "największej – gra losowałaby z odwróconego zakresu.")
+            ok = False
+        big = [k for k in ("tired2", "tired14")
+               if k in self.spins and self.spins[k].value() > cp.GiftAmounts.TIREDNESS_SAFE_ADD]
+        if big:
+            msgs.append(f"Dodanie więcej niż {cp.GiftAmounts.TIREDNESS_SAFE_ADD} zmęczenia przekręca "
+                        "bajt ze znakiem: jednostki, które są już zmęczone, zamiast kary dostaną "
+                        "zerowe zmęczenie (ten błąd ma też oryginalna KSIĘGA PLAG z +50).")
+        self.warn.setText(" ".join(msgs))
+        return ok
+
+    def valid(self):
+        return self._validate()
+
+    def _changed(self, *_):
+        self._validate()
+        if not self._loading:
+            self.on_change()
+            self.on_amounts_changed(self.value())
+
+    def load(self, exe):
+        if not self.ft:
+            return
+        self._loading = True
+        for key, v in exe.get("gift_amounts").items():
+            if key in self.spins:
+                self.spins[key].setValue(v)
+        self._loading = False
+        self._validate()
+
+    def store(self, exe):
+        if self.ft:
+            exe.set("gift_amounts", self.value())
+
+
 class RandomUnitsTab(QWidget):
     def __init__(self, exe, on_change):
         super().__init__()
         lay = QVBoxLayout(self)
         self.boxes = {}
-        for key in ("temple", "temple_mission", "port"):
+        for key in ("temple", "temple_mission"):
+            if key in exe.features:
+                box = DwordListBox(exe.features[key], on_change)
+                lay.addWidget(box)
+                self.boxes[key] = box
+        self.gifts = GiftsBox(exe, on_change)
+        self.amounts = GiftAmountsBox(exe, on_change, self.gifts.refresh_effects)
+        lay.addWidget(self.amounts)
+        lay.addWidget(self.gifts)
+        for key in ("port",):
             if key in exe.features:
                 box = DwordListBox(exe.features[key], on_change)
                 lay.addWidget(box)
@@ -124,10 +448,23 @@ class RandomUnitsTab(QWidget):
     def load(self, exe):
         for k, box in self.boxes.items():
             box.load(exe.get(k))
+        self.amounts.load(exe)
+        if "gift_amounts" in exe.features:
+            self.gifts.refresh_effects(exe.get("gift_amounts"))
+        self.gifts.load(exe)
+        for box in self.gifts.boxes.values():
+            fit_table_height(box.table)
 
     def store(self, exe):
         for k, box in self.boxes.items():
             exe.set(k, box.value())
+        self.amounts.store(exe)
+        self.gifts.store(exe)
+
+    def valid(self):
+        ok_amounts = self.amounts.valid()
+        ok_gifts = self.gifts.valid()
+        return ok_amounts and ok_gifts
 
 
 class ProductionTab(QWidget):
@@ -260,10 +597,12 @@ class WallsTab(QWidget):
         lay.addWidget(note_label(
             "Mur ma trzy poziomy – gra pokazuje je jako 1, 2 i 3 (zamek zaczyna na 1., twierdza na 2.). "
             "„Rozbuduj mury” w zamku podnosi mur o jeden poziom: gra pobiera koszt ze skarbca tego zamku "
-            "i ustawia licznik tur. Licznik spada o 1 na początku każdej tury właściciela zamku, a gdy dojdzie do zera, "
-            "poziom muru rośnie. Podczas trwającej rozbudowy nie można zlecić kolejnej, ale można ją zlecić "
-            "już w tej turze, w której poprzednia się skończyła. Oryginalnie czasy to 5 i 10 tur, a oba koszty "
-            "to 1 sztuka złota."))
+            "i ustawia licznik tur. Licznik spada o 1 na początku każdej tury właściciela zamku, "
+            "a gdy dojdzie do zera, poziom muru rośnie. Podczas trwającej rozbudowy nie można "
+            "zlecić kolejnej, ale można ją zlecić już w tej turze, w której poprzednia się "
+            "skończyła. Oryginalnie czasy to 5 i 10 tur, a oba koszty to 1 sztuka złota "
+            "(wygląda to na błąd w danych gry – bajty 05 01 / 0A 01 wyglądają na zamierzone "
+            "16-bitowe 261 i 266, ale gra czyta z nich po jednym bajcie)."))
         box = QGroupBox("Rozbudowa murów")
         bl = QVBoxLayout(box)
         grid = QGridLayout()
@@ -306,7 +645,9 @@ class WallsTab(QWidget):
                 where + "Czas i koszt czyta tylko funkcja rozbudowy murów (0x379D4), a wywołuje ją zarówno "
                 "menu zamku, jak i komputerowy przeciwnik (reguła „rozbudowa_murow”), więc nowe wartości "
                 "obowiązują też jego. Komputer nie ma tu zniżki, jaką ma na licencje i budynki, i próbuje "
-                "rozbudowy, gdy tylko może – przy wysokiej cenie będzie po prostu czekał, aż uzbiera złoto."
+                "rozbudowy, gdy tylko może – przy wysokiej cenie będzie po prostu czekał, aż uzbiera złoto. "
+                "Menu „Rozbuduj mury” nie pokazuje ceny, więc nigdzie w grze nie zostaje stara liczba: "
+                "kliknięcie bez dość złota po prostu nic nie robi (tak samo jak w oryginale). "
                 + (self.ft.note or "")))
         else:
             box.setEnabled(False)
@@ -344,7 +685,8 @@ class WallsTab(QWidget):
             self.turns[lvl].setValue(v["turns"][lvl])
             self.costs[lvl].setValue(v["cost"][lvl])
         self.strength.setText(
-            "Wytrzymałość murów (mnożnik obrażeń zadawanych murom w bitwie, ×/256 – im mniej, tym mocniejszy mur): "
+            "Wytrzymałość murów (mnożnik obrażeń zadawanych murom w bitwie, ×/256 – im mniej, "
+            "tym mocniejszy mur): "
             + ", ".join(f"{lvl + 1}. poziom {s}" for lvl, s in enumerate(v["strength"]))
             + ". Tego pola tabeli program nie zmienia.")
         self._loading = False

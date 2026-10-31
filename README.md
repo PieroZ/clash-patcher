@@ -17,7 +17,10 @@ Obsługiwane wersje (rozpoznawane po rozmiarze pliku):
 
 ## Co można zmienić
 
-- **Świątynia i port** – jakie jednostki można wylosować (także wariant świątyni z wybranych misji).
+- **Świątynia i port** – jakie jednostki można wylosować (także wariant świątyni z wybranych misji),
+  wszystkie dary świątyń i miejsc kultu (co, z jakim prawdopodobieństwem i z jakim przedmiotem –
+  osobno dla obu religii oraz dla gracza i komputera) i siła każdego daru (złoto, morale, zmęczenie,
+  zdrowie, doświadczenie, liczba jednostek w nowym oddziale).
 - **Kuźnia, warsztat, poziomy** – które jednostki wymagają kuźni / warsztatu i jaki minimalny poziom zamku.
 - **Mury** – koszt (0–255 sztuk złota) i czas (1–255 tur) rozbudowy muru do 2. i 3. poziomu.
 - **Punkty akcji** – koszt i wymagane minimum PA przy dzieleniu i łączeniu oddziałów.

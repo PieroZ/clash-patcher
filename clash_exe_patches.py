@@ -29,6 +29,121 @@ def unit_label(uid):
     return f"{uid:02X} – ?"
 
 
+# ---------------------------------------------------------------- teksty gry (Mazovia)
+# Bajty 0x80-0xFF strony kodowej Mazovia.
+MAZOVIA_HIGH = (
+    "ÇüéâäàąçêëèïîćÄĄ"   # 0x80
+    "ĘęłôöĆûùŚÖÜ¢Ł¥śƒ"   # 0x90
+    "ŹŻóÓńŃźż¿⌐¬½¼¡«»"   # 0xA0
+    "░▒▓│┤╡╢╖╕╣║╗╝╜╛┐"   # 0xB0
+    "└┴┬├─┼╞╟╚╔╩╦╠═╬╧"   # 0xC0
+    "╨╤╥╙╘╒╓╫╪┘┌█▄▌▐▀"   # 0xD0
+    "αßΓπΣσµτΦΘΩδ∞φε∩"   # 0xE0
+    "≡±≥≤⌠⌡÷≈°∙·√ⁿ²■ "   # 0xF0
+)
+
+
+def mazovia_text(data, offset, limit=400):
+    """Tekst gry (kodowanie Mazovia, zakonczony zerem) spod offsetu w pliku."""
+    if not 0 <= offset < len(data):
+        return ""
+    out = []
+    for i in range(offset, min(offset + limit, len(data))):
+        b = data[i]
+        if b == 0:
+            break
+        out.append(chr(b) if b < 0x80 else MAZOVIA_HIGH[b - 0x80])
+    return "".join(out)
+
+
+# ---------------------------------------------------------------- dary swiatyn
+# Numer daru = przypadek instrukcji wyboru w Temple_ProcessGift (0x5BCDB), 0..15.
+# Opis liczy sie z aktualnych wartosci w kodzie, bo one sa edytowalne.
+def _knives(n):
+    if n == 1:
+        return "1 nożyk"
+    if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14):
+        return f"{n} nożyki"
+    return f"{n} nożyków"
+
+
+def _signed(n):
+    return f"{n:+d}"
+
+
+GIFT_EFFECTS = {
+    0:  ("nowy oddział", lambda a: f"{a['troops_min']}–{a['troops_max']} losowych jednostek "
+                                   f"dołącza jako nowa armia"),
+    1:  ("grom z jasnego nieba", lambda a: "armia ginie"),
+    2:  ("usunięcie zmęczenia", lambda a: f"zmęczenie {_signed(a['tired2'])}"),
+    3:  ("wzrost morale (dar fabularny)", lambda a: f"morale {_signed(a['morale3'])}"),
+    4:  ("uzdrowienie", lambda a: f"zdrowie := {a['health4']}"),
+    5:  ("uzdrowienie i wypoczynek", lambda a: f"zdrowie := {a['health5']}, zmęczenie := {a['tired5']}"),
+    6:  ("doświadczenie (więcej)", lambda a: _knives(a['exp6'])),
+    7:  ("wzrost morale", lambda a: f"morale {_signed(a['morale7'])}"),
+    8:  ("doświadczenie (mniej)", lambda a: _knives(a['exp8'])),
+    9:  ("złoto", lambda a: f"{a['gold9']} szt. złota"),
+    10: ("złoto", lambda a: f"{a['gold10']} szt. złota"),
+    11: ("złoto", lambda a: f"{a['gold11']} szt. złota"),
+    12: ("złoto", lambda a: f"{a['gold12']} szt. złota"),
+    13: ("spadek morale", lambda a: f"morale {_signed(a['morale13'])}"),
+    14: ("klątwa", lambda a: f"morale {_signed(a['morale14'])}, zmęczenie {_signed(a['tired14'])}"),
+    15: ("brak efektu", lambda a: "nic się nie dzieje"),
+}
+GIFT_COUNT = len(GIFT_EFFECTS)
+
+# Dary, ktore gra przyjmuje w misjach 2, 6, 12 i 16 dla gracza: Temple_UnitGetInto losuje tam
+# w petli, dopoki nie trafi na dar 0 albo 15. Tabela gracza bez takiego osiagalnego wpisu
+# zawiesilaby gre w tych misjach.
+GIFT_REROLL_OK = (0, 15)
+
+
+def gift_label(gid, amounts=None):
+    name, describe = GIFT_EFFECTS.get(gid, ("?", lambda a: ""))
+    if amounts:
+        try:
+            desc = describe(amounts)
+        except KeyError:
+            desc = ""
+    else:
+        desc = ""
+    return f"{gid:02d} – {name}" + (f" ({desc})" if desc else "")
+
+
+# Obrazek z temple.s32 (jednoczesnie numer dzwieku sfx\artefakt\N.wav, przy -1 gra bierze 7).
+# Pominiete 22 i 23: nie maja dzwieku, a 23 to tlo okna daru (S32_GetHeight(set, 0x17)).
+ARTEFACT_NAMES = {
+    -1: "(bez obrazka – szczera modlitwa)",
+    0: "(grom z jasnego nieba / gniew bogów)",
+    1: "(nowy oddział)",
+    2: "pierścień zawinięty w chustę",
+    3: "medalion Tureoka",
+    4: "kielich ze świętym nektarem",
+    5: "RĘKAWICA SIŁY",
+    6: "MIECZ PALLADYNÓW",
+    7: "KSIĘGA WYZNAŃ",
+    8: "HEŁM ZDOBYWCÓW",
+    9: "ZŁOTY TOPÓR",
+    10: "TARCZA TREGÓW / ORĘŻ TREGÓW",
+    11: "CUDOWNE CIŻEMKI",
+    12: "KLEPSYDRA",
+    13: "mieszek diamentów",
+    14: "diament",
+    15: "szkatuła z kosztownościami / mieszek monet",
+    16: "szkatuła / zbutwiała skrzynia",
+    17: "szczątki pradawnego władcy",
+    18: "okuta tarcza z czaszką (w oryginale nieużywana)",
+    19: "CZARNY DIAMENT",
+    20: "MIECZ GŁUPCÓW",
+    21: "KSIĘGA PLAG",
+    24: "magiczny diament Dahar'khu / Xye",
+}
+
+
+def artefact_label(sid):
+    return f"{sid:>2} – {ARTEFACT_NAMES.get(sid, '?')}"
+
+
 # ---------------------------------------------------------------- rodzaje danych
 class Instr:
     """Wartosc natychmiastowa w instrukcji maszynowej (np. 'BA 04 00 00 00' = mov edx,4).
@@ -54,6 +169,31 @@ class Instr:
 
     def write(self, data, v):
         data[self.value_offset] = v & 0xFF
+
+
+class Instr32:
+    """Wartosc 32-bitowa ze znakiem w instrukcji (np. 'BA 9C FF FF FF' = mov edx,-100).
+    Jak Instr, ale wartosc zajmuje 4 bajty - potrzebne przy liczbach ujemnych i wiekszych od 255."""
+
+    def __init__(self, at, prefix):
+        self.at = at
+        self.prefix = bytes.fromhex(prefix)
+
+    @property
+    def value_offset(self):
+        return self.at + len(self.prefix)
+
+    def check(self, data):
+        got = bytes(data[self.at:self.at + len(self.prefix)])
+        if got != self.prefix:
+            return f"0x{self.at:X}: oczekiwano {self.prefix.hex(' ').upper()}, jest {got.hex(' ').upper()}"
+        return None
+
+    def read(self, data):
+        return struct.unpack_from("<i", data, self.value_offset)[0]
+
+    def write(self, data, v):
+        struct.pack_into("<i", data, self.value_offset, int(v))
 
 
 class UnitDwordList:
@@ -266,6 +406,161 @@ class TechTable:
             data[self.addr(uid, True)] = type2 & 0xFF
 
 
+class GiftTable:
+    """Jedna z czterech tabel losowania darow swiatyni / miejsca kultu.
+
+    Wpis ma 24 bajty: {i32 numer daru, i32 waga, i32 obrazek, 3 wskazniki na tekst (PL, EN, DE)}.
+    Lista konczy sie wpisem, ktorego numer daru to -1. Cztery tabele leza w pliku jedna za druga,
+    wiec liczby wpisow nie da sie zmienic bez przenoszenia tabel - edytowalne sa numer daru,
+    waga i obrazek kazdego istniejacego wpisu.
+
+    Tabele wybiera Temple_UnitGetInto (0x5C135) po religii gracza i po tym, czy jest czlowiekiem.
+    Losowanie: Temple_Random (0x5BC2C) sumuje wagi (S), bierze r = Random(0, S-1) i wybiera
+    pierwszy wpis, dla ktorego suma wag do niego wlacznie jest >= r. Dlatego r = 0 zawsze trafia
+    w pierwszy wpis (ma o jedna szanse wiecej, niz wynika z wagi), a ostatni wpis traci jedna
+    szanse - metoda `chances` liczy to dokladnie tak samo jak gra.
+
+    Tekstow nie zmieniamy: kazdy wpis ma wlasne napisy o stalej dlugosci, a numer daru nie ma
+    z nimi nic wspolnego, wiec po zmianie efektu komunikat w grze zostaje stary."""
+    kind = "gift_table"
+    STRIDE = 24
+    MAX_ENTRIES = 32
+    MAX_WEIGHT = 999
+    MIN_SPRITE, MAX_SPRITE = -1, 63
+
+    def __init__(self, key, title, offset, text_delta, human, note=""):
+        self.key, self.title, self.note = key, title, note
+        self.offset, self.text_delta = offset, text_delta
+        self.human = human     # czy to tabela gracza (dotyczy jej przelosowanie w misjach 2/6/12/16)
+
+    def entry_offset(self, i):
+        return self.offset + i * self.STRIDE
+
+    def count(self, data):
+        """Liczba wpisow przed znacznikiem konca (-1)."""
+        n = 0
+        while n <= self.MAX_ENTRIES:
+            off = self.entry_offset(n)
+            if off + 4 > len(data) or struct.unpack_from("<i", data, off)[0] == -1:
+                break
+            n += 1
+        return n
+
+    def check(self, data):
+        n = 0
+        while True:
+            off = self.entry_offset(n)
+            if n > self.MAX_ENTRIES:
+                return f"0x{self.offset:X}: brak końca listy (-1) w pierwszych {self.MAX_ENTRIES} wpisach"
+            if off + self.STRIDE > len(data):
+                return f"0x{self.offset:X}: tabela wychodzi za koniec pliku"
+            gift, weight, sprite = struct.unpack_from("<iii", data, off)
+            if gift == -1:
+                break
+            if not 0 <= gift < GIFT_COUNT:
+                return f"0x{off:X}: {gift} nie jest numerem daru (0–{GIFT_COUNT - 1})"
+            if not 0 <= weight <= self.MAX_WEIGHT:
+                return f"0x{off + 4:X}: waga {weight} poza zakresem 0–{self.MAX_WEIGHT}"
+            if not self.MIN_SPRITE <= sprite <= self.MAX_SPRITE:
+                return f"0x{off + 8:X}: obrazek {sprite} poza zakresem " \
+                       f"{self.MIN_SPRITE}–{self.MAX_SPRITE}"
+            n += 1
+        if n == 0:
+            return f"0x{self.offset:X}: tabela jest pusta"
+        return None
+
+    def texts(self, data, i):
+        """Trzy teksty wpisu (polski, angielski, niemiecki)."""
+        off = self.entry_offset(i) + 12
+        out = []
+        for k in range(3):
+            ptr = struct.unpack_from("<I", data, off + 4 * k)[0]
+            out.append(mazovia_text(data, ptr + self.text_delta) if ptr else "")
+        return out
+
+    def read(self, data):
+        entries = []
+        for i in range(self.count(data)):
+            gift, weight, sprite = struct.unpack_from("<iii", data, self.entry_offset(i))
+            entries.append({"gift": gift, "weight": weight, "sprite": sprite,
+                            "texts": self.texts(data, i)})
+        return entries
+
+    def write(self, data, entries):
+        for i in range(min(len(entries), self.count(data))):
+            e = entries[i]
+            struct.pack_into(
+                "<iii", data, self.entry_offset(i),
+                max(0, min(GIFT_COUNT - 1, e["gift"])),
+                max(0, min(self.MAX_WEIGHT, e["weight"])),
+                max(self.MIN_SPRITE, min(self.MAX_SPRITE, e["sprite"])))
+
+    @staticmethod
+    def chances(weights):
+        """Ile z S losowan trafia w kazdy wpis - dokladnie jak w Temple_Random.
+
+        Wpis i jest wybrany dla r = 0 (zawsze wpis 0) oraz dla
+        suma(0..i-1) < r <= suma(0..i), przy r z zakresu 0..S-1."""
+        total = sum(weights)
+        out, acc = [], 0
+        for w in weights:
+            out.append(max(0, min(acc + w, total - 1) - acc))
+            acc += w
+        if out:
+            out[0] += 1
+        return out
+
+
+class GiftAmount:
+    """Jedna liczba wpisana wprost w kod obslugi darow (Temple_ProcessGift / Gift_NewTroops)."""
+
+    def __init__(self, key, gift, label, instr, lo, hi, unit="", note=""):
+        self.key, self.gift, self.label = key, gift, label
+        self.instr, self.lo, self.hi = instr, lo, hi
+        self.unit, self.note = unit, note
+
+
+class GiftAmounts:
+    """Sila darow: liczby, ktore gra ma wpisane w kodzie.
+
+    Gra nie trzyma ich w zadnej tabeli - sa to operandy instrukcji w Temple_ProcessGift
+    (0x5BCDB, instrukcja wyboru z 16 przypadkami) i w Gift_NewTroops (0x5B6FF, Random(1,5)).
+    Te same liczby obowiazuja gracza i komputer, bo oba przechodza przez te funkcje; dotycza tez
+    zakopanych skarbow, ktore korzystaja z tych samych numerow darow."""
+    kind = "gift_amounts"
+    # SubUnit_AddTiredness (0x2881D) dodaje do bajtu ze znakiem i dopiero potem przycina do 0..100,
+    # wiec dodanie wiecej niz 27 przekreca bajt jednostkom o duzym zmeczeniu i zeruje im zmeczenie.
+    TIREDNESS_SAFE_ADD = 27
+
+    def __init__(self, key, title, amounts, note=""):
+        self.key, self.title, self.note = key, title, note
+        self.amounts = amounts
+
+    def by_gift(self, gift):
+        return [a for a in self.amounts if a.gift == gift]
+
+    def get(self, key):
+        for a in self.amounts:
+            if a.key == key:
+                return a
+        return None
+
+    def check(self, data):
+        for a in self.amounts:
+            err = a.instr.check(data)
+            if err:
+                return f"{a.key}: {err}"
+        return None
+
+    def read(self, data):
+        return {a.key: a.instr.read(data) for a in self.amounts}
+
+    def write(self, data, val):
+        for a in self.amounts:
+            if a.key in val:
+                a.instr.write(data, max(a.lo, min(a.hi, val[a.key])))
+
+
 class WallTable:
     """Tabela murow (0x1339D8 w pamiesci gry) - 3 wpisy po 4 bajty:
     {u16 wytrzymalosc x256, u8 tury rozbudowy, u8 koszt rozbudowy}.
@@ -470,6 +765,50 @@ DESC_NO_GROUND_ON_FLY = (
     'e jest sprawdzane.'
 )
 
+# Teksty darow leza w pliku pod "wskaznik + DOS_TEXT_DELTA" (loader DOS/4GW dolicza baze).
+DOS_TEXT_DELTA = 0x13C400
+
+DESC_GIFTS = (
+    'Co i z jakim prawdopodobieństwem można dostać w świątyni (religia chrześcijańska) i w miejsc'
+    'u kultu (religia pogańska). Gra ma cztery osobne tabele – dla każdej religii inną dla gracz'
+    'a i inną dla komputera – i wybiera je po religii właściciela armii, która weszła do świątyni.'
+)
+
+
+def _dos_gift_amounts():
+    """Liczby darow wpisane w kod wersji DOS (offsety w pliku; kod = adres w pamieci + 0x39400)."""
+    return GiftAmounts("gift_amounts", "Siła darów świątyń i miejsc kultu", [
+        # Gift_NewTroops 0x5B6FF: Random(1,5) -> mov edx,5 / mov eax,1
+        GiftAmount("troops_max", 0, "najwięcej jednostek", Instr32(0x94B1E, "BA"), 1, 10),
+        GiftAmount("troops_min", 0, "najmniej jednostek", Instr32(0x94B23, "B8"), 1, 10),
+        # Temple_ProcessGift 0x5BCDB, kolejne przypadki instrukcji wyboru
+        GiftAmount("tired2", 2, "zmęczenie", Instr32(0x95161, "BA"), -100, 100,
+                   note="Unit_AddTiredness: wartość dodawana, wynik przycięty do 0–100."),
+        GiftAmount("morale3", 3, "morale", Instr32(0x951A8, "BA"), -20, 20,
+                   note="Unit_AddMorale: wartość dodawana, wynik przycięty do 0–20."),
+        GiftAmount("health4", 4, "zdrowie", Instr(0x95218, "C6400F"), 0, 100,
+                   note="Wpisywane wprost w pole zdrowia każdej jednostki (nie dodawane)."),
+        GiftAmount("health5", 5, "zdrowie", Instr(0x95289, "C6400F"), 0, 100),
+        GiftAmount("tired5", 5, "zmęczenie", Instr(0x95294, "C64010"), 0, 100,
+                   note="Wpisywane wprost w pole zmęczenia (nie dodawane)."),
+        GiftAmount("exp6", 6, "nożyki", Instr(0x952E6, "837DE0"), 0, 99,
+                   note="Liczba obrotów pętli Unit_AddExperience. 3 nożyki = 1 poziom, "
+                        "najwyższy poziom to 3, więc 9 wystarcza na pełne doświadczenie."),
+        GiftAmount("morale7", 7, "morale", Instr32(0x95330, "BA"), -20, 20),
+        GiftAmount("exp8", 8, "nożyki", Instr(0x95381, "837DDC"), 0, 99),
+        GiftAmount("gold9", 9, "złoto", Instr32(0x953D4, "B8"), 1, 1000),
+        GiftAmount("gold10", 10, "złoto", Instr32(0x953F1, "B8"), 1, 1000),
+        GiftAmount("gold11", 11, "złoto", Instr32(0x9542B, "B8"), 1, 1000),
+        GiftAmount("gold12", 12, "złoto", Instr32(0x9540E, "B8"), 1, 1000),
+        GiftAmount("morale13", 13, "morale", Instr32(0x9543F, "BA"), -20, 20),
+        GiftAmount("morale14", 14, "morale", Instr32(0x95486, "BA"), -20, 20),
+        GiftAmount("tired14", 14, "zmęczenie", Instr32(0x95498, "BA"), -100, 100),
+    ], note="Złoto: Gift_Gold (0x5B8CE) tworzy oddział ze złotem po 100 sztuk na jednostkę, "
+            "a oddział ma najwyżej 10 jednostek – dlatego maksimum to 1000. "
+            "Morale mieści się w 0–20, zdrowie i zmęczenie w 0–100, więc wartości poza tymi "
+            "zakresami nic by nie dawały.")
+
+
 PROFILES = {
     "dos_pl": {
         "name": "Clash – wersja DOS (CLASH.EXE, polska)",
@@ -482,6 +821,11 @@ PROFILES = {
                           Instr(0x94C13, "BA"),
                           note="Używany zamiast zwykłej listy, gdy pole gry 0x222F1 ma wartość 2, 6, 12 lub 16 "
                                "(najpewniej numer/typ misji)."),
+            GiftTable("gifts_christian_human", "Świątynia – gracz", 0x16203C, DOS_TEXT_DELTA, True),
+            GiftTable("gifts_christian_ai", "Świątynia – komputer", 0x16233C, DOS_TEXT_DELTA, False),
+            GiftTable("gifts_pagan_human", "Miejsce kultu – gracz", 0x1621D4, DOS_TEXT_DELTA, True),
+            GiftTable("gifts_pagan_ai", "Miejsce kultu – komputer", 0x1624A4, DOS_TEXT_DELTA, False),
+            _dos_gift_amounts(),
             UnitDwordList("port", "Port", 0x163E0C, 12, Instr(0x9952A, "BA")),
             UnitByteSet("forge", "Wymaga kuźni", 0x161F7C, 12),
             UnitByteSet("workshop", "Wymaga warsztatu", 0x161F88, 12),
