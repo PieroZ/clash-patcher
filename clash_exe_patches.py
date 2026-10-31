@@ -152,7 +152,9 @@ class LinkedValue:
 
 class CostWithMinimum:
     """Koszt (odejmowana liczba) + wymagane minimum (warunki 'cmp eax, N').
-    `clamped` - czy gra sama pilnuje, zeby nie zejsc ponizej zera (laczenie tak, dzielenie nie)."""
+    `clamped` - czy gra sama pilnuje, zeby nie zejsc ponizej zera. Tylko laczenie w wersji Windows
+    (0x410130 obcina kare do PA jednostki); w DOS (0x25B8C) i przy dzieleniu jest zwykle 'sub byte',
+    wiec PA mniejsze od kosztu przekreca sie na ok. 250."""
     kind = "cost_min"
 
     def __init__(self, key, title, cost, minimums, clamped, lo=0, hi=100, note=""):
@@ -391,7 +393,7 @@ PROFILES = {
                             Instr(0x74DAA, "806808"), [Instr(0x74A46, "83F8"), Instr(0x74A9D, "83F8")],
                             clamped=False),
             CostWithMinimum("ap_join", "Dołączenie całego oddziału do innego",
-                            Instr(0x7485D, "BA"), [Instr(0x7484F, "83F8")], clamped=True,
+                            Instr(0x7485D, "BA"), [Instr(0x7484F, "83F8")], clamped=False,
                             note="Tej samej funkcji gra używa przy budowaniu armii na starcie scenariusza, "
                                  "dlatego koszt łączenia odejmuje PA także jednostkom startowym."),
             EntrenchBonus("entrench", "Premia do obrony za okopanie", [

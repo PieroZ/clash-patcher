@@ -22,14 +22,22 @@ Obsługiwane wersje (rozpoznawane po rozmiarze pliku):
 
 ## Uruchomienie
 
+**Najprościej (Windows):** zainstaluj Pythona z https://www.python.org/downloads/ (w instalatorze zaznacz
+„Add python.exe to PATH”), pobierz to repozytorium (Code → Download ZIP, rozpakuj) i kliknij dwa razy
+`uruchom.bat`. Za pierwszym razem doinstaluje się PySide6 (chwilę to trwa). Plik `CLASH.EXE` można też
+przeciągnąć myszką na `uruchom.bat` – otworzy się od razu.
+
+**Ręcznie:** w **wierszu poleceń Windows** (Start → wpisz `cmd`), nie w oknie Pythona `>>>`:
+
 ```
+cd ŚCIEŻKA\DO\clash-patcher
 python -m venv venv
 venv\Scripts\activate
 pip install -r requirements.txt
 python clash_exe_config.py "C:\Games\Clash\Clash\LONGSOFT\CLASH\CLASH.EXE"
 ```
 
-Ścieżkę można pominąć i otworzyć plik przyciskiem „Otwórz”.
+Ścieżkę do gry można pominąć i otworzyć plik przyciskiem „Otwórz”.
 
 Przed pierwszym zapisem program tworzy kopię `NAZWA.EXE.bak` (przycisk „Przywróć oryginał” ją odtwarza).
 Przy otwarciu każde ustawienie jest weryfikowane – jeśli bajty w pliku nie wyglądają jak w znanej wersji gry,
@@ -39,6 +47,7 @@ ustawienie zostaje wyłączone zamiast uszkodzić plik.
 
 | Plik | Opis |
 |---|---|
+| `uruchom.bat` | uruchamianie dwuklikiem (tworzy venv i instaluje zależności) |
 | `clash_exe_config.py` | interfejs graficzny |
 | `clash_exe_patches.py` | wszystkie adresy i rodzaje danych (`PROFILES`), odczyt/zapis |
 | `CLASH_EXE_CONFIG.md` | tabela adresów, opis poprawek, jak dodać nowe znalezisko |

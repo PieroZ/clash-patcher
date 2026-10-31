@@ -63,3 +63,23 @@ minimum PA, więc warunek „PA ≥ N” zawsze zawodzi, niezależnie od ustawio
 W wersji DOS kod czyta adresy zmiennych gry z operandów istniejących instrukcji (0x2AC03, 0x2AC31, 0x2AC45),
 bo DOS/4GW relokuje dane, a nowy kod nie ma własnych wpisów relokacji. Źródło asemblerowe:
 `tools/build_nofly_patch.py` (wymaga `pip install keystone-engine`).
+
+## Łączenie i dzielenie – jak to działa w grze (DOS, Windows analogicznie)
+
+„Oddział” w grze to dowolna grupa 1–10 jednostek stojąca na jednym polu – pojedyncza jednostka to oddział
+z jedną jednostką. Gra nie rozróżnia „jednostki” i „oddziału”, rozróżnia tylko **rodzaj operacji**:
+
+| Operacja | Funkcja | Minimum PA (sprawdzane) | Koszt PA (odejmowany) |
+|---|---|---|---|
+| Cały zaznaczony oddział (także 1-osobowy) dołącza do innego | `Unit_AddToGroup` 0x3B2EB | 0x74851 | 0x7485E |
+| Część jednostek oddziału przechodzi na **puste** sąsiednie pole | `Unit_MoveFromGroup` 0x3B738 → 0x3B4CE | 0x74A48 | 0x74DAD |
+| Część jednostek oddziału przechodzi do **sąsiedniego oddziału** | jw. | 0x74A9F | 0x74DAD |
+
+- Minimum dotyczy najmniejszej liczby PA wśród **przenoszonych** jednostek; jednostki oddziału docelowego
+  nie są sprawdzane ani karane.
+- Przejście części jednostek do sąsiedniego oddziału to dla gry rozdzielenie – kosztuje 0x74DAD,
+  koszt łączenia 0x7485E nie jest wtedy naliczany.
+- Wszystkich jednostek oddziału nie da się przenieść przez „rozdzielenie” – wtedy działa łączenie całego oddziału.
+- Kara to zwykłe odejmowanie bajtu bez pilnowania zera. Jeśli minimum jest mniejsze niż koszt, jednostka
+  z liczbą PA pomiędzy nimi przekręca się na ok. 250 PA i potem przechodzi każde kolejne sprawdzenie.
+  (Wyjątek: łączenie w wersji Windows obcina karę do posiadanych PA.)
