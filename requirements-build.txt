@@ -1,0 +1,2 @@
+# tylko do budowania pliku .exe (build_exe.py)
+pyinstaller>=6.6

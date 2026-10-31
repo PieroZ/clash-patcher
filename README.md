@@ -48,6 +48,27 @@ Przed pierwszym zapisem program tworzy kopię `NAZWA.EXE.bak` (przycisk „Przyw
 Przy otwarciu każde ustawienie jest weryfikowane – jeśli bajty w pliku nie wyglądają jak w znanej wersji gry,
 ustawienie zostaje wyłączone zamiast uszkodzić plik.
 
+## Budowanie pliku .exe
+
+Gotowy `.exe` nie wymaga od użytkownika ani Pythona, ani PySide6. Najnowszy buduje się na GitHubie przy każdej zmianie (zakładka **Actions** → „Build exe” → artefakt `clash-exe-config`), a po wypchnięciu tagu `v*` (np. `v1.0`) trafia dodatkowo do wydania
+w **Releases**.
+
+Lokalnie, w **wierszu poleceń Windows**:
+
+```
+cd ŚCIEŻKA\DO\clash-patcher
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt -r requirements-build.txt
+python build_exe.py
+```
+
+Wynik: `dist\clash-exe-config.exe` – jeden plik, bez okna konsoli.
+
+Przydatne opcje: `--onedir` (katalog z plikami zamiast jednego `.exe`, za to szybszy start),
+`--console` (zostawia okno konsoli, widać wtedy komunikaty o błędach), `--icon PLIK.ICO`,
+`--name NAZWA`. Pełna lista: `python build_exe.py --help`.
+
 ## Pliki
 
 | Plik | Opis |
@@ -57,5 +78,7 @@ ustawienie zostaje wyłączone zamiast uszkodzić plik.
 | `clash_exe_patches.py` | wszystkie adresy i rodzaje danych (`PROFILES`), odczyt/zapis |
 | `CLASH_EXE_CONFIG.md` | tabela adresów, opis poprawek, jak dodać nowe znalezisko |
 | `tools/build_nofly_patch.py` | źródło asemblerowe poprawki „naziemne nie dołączają do latających” (`pip install -r requirements-dev.txt`) |
+| `build_exe.py` | budowanie `clash-exe-config.exe` z `clash_exe_config.py` (PyInstaller) |
+| `.github/workflows/build-exe.yml` | budowanie `.exe` na GitHub Actions przy każdej zmianie |
 
 Repozytorium nie zawiera plików gry (`.exe`, zapisów `.DAT`).

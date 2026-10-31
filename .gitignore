@@ -10,3 +10,7 @@ __pycache__/
 *.bak
 *.DAT
 *.dat
+# wynik build_exe.py / PyInstallera
+build/
+dist/
+*.spec
