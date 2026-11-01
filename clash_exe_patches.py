@@ -43,17 +43,40 @@ MAZOVIA_HIGH = (
 )
 
 
+def mazovia_decode(raw):
+    """Bajty w kodowaniu Mazovia -> tekst."""
+    return "".join(chr(b) if b < 0x80 else MAZOVIA_HIGH[b - 0x80] for b in raw)
+
+
 def mazovia_text(data, offset, limit=400):
     """Tekst gry (kodowanie Mazovia, zakonczony zerem) spod offsetu w pliku."""
     if not 0 <= offset < len(data):
         return ""
-    out = []
-    for i in range(offset, min(offset + limit, len(data))):
-        b = data[i]
-        if b == 0:
-            break
-        out.append(chr(b) if b < 0x80 else MAZOVIA_HIGH[b - 0x80])
-    return "".join(out)
+    end = offset
+    while end < min(offset + limit, len(data)) and data[end] != 0:
+        end += 1
+    return mazovia_decode(data[offset:end])
+
+
+# Odwrotnosc tablicy wyzej. setdefault, bo niektore znaki sa w niej po dwa razy (0xFF to druga
+# spacja, 0xFA drugi znak ·) - zapisujemy zawsze ten o nizszym kodzie, czyli ten z oryginalu.
+MAZOVIA_ENCODE = {chr(b): b for b in range(0x20, 0x7F)}
+for _i, _ch in enumerate(MAZOVIA_HIGH):
+    MAZOVIA_ENCODE.setdefault(_ch, 0x80 + _i)
+MAZOVIA_ENCODE["\n"] = 0x0A           # w tekstach gry wymusza zlamanie wiersza
+
+
+def mazovia_encode(text):
+    """Tekst -> (bajty w kodowaniu Mazovia, lista znakow, ktorych ta strona kodowa nie ma)."""
+    out, bad = bytearray(), []
+    for ch in text.replace("\r\n", "\n").replace("\r", "\n"):
+        b = MAZOVIA_ENCODE.get(ch)
+        if b is None:
+            if ch not in bad:
+                bad.append(ch)
+        else:
+            out.append(b)
+    return bytes(out), bad
 
 
 # ---------------------------------------------------------------- dary swiatyn
@@ -69,6 +92,14 @@ def _knives(n):
 
 def _signed(n):
     return f"{n:+d}"
+
+
+def lines_word(n):
+    if n == 1:
+        return "wiersz"
+    if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14):
+        return "wiersze"
+    return "wierszy"
 
 
 GIFT_EFFECTS = {
@@ -142,6 +173,130 @@ ARTEFACT_NAMES = {
 
 def artefact_label(sid):
     return f"{sid:>2} – {ARTEFACT_NAMES.get(sid, '?')}"
+
+
+# ---------------------------------------------------------------- okienko daru
+# Tekst daru rysuje TempleWindow (0x5B9DC): pergamin z temple.s32 (klatka 0x16, 329x178 px,
+# od y = 150, i klatka 0x17 obok niej, 311x168 px, od y = 156 - razem y 150..327), obrazek daru
+# (kazda klatka 58x39 px) w (294, 285), czyli x 294..351 i y 285..323,
+# i tekst czcionka 0x11 (gfx\BUD_INFO.SFN, odstep 1 px za znakiem, wiersz co 20 px) miedzy
+# x = 0x46 i x = 0x239, od y = 0xD2, z wyrownaniem 6 - zawijanie po slowach, kazdy wiersz
+# wysrodkowany (Text_DrawAligned 0x208C7).
+GIFT_TEXT_WIDTH = 0x239 - 0x46        # 499 px - tyle miesci sie w wierszu
+GIFT_FONT_SPACING = 1
+GIFT_LINES_CLEAN = 4                  # tyle wierszy miesci sie nad obrazkiem daru (jak w oryginale)
+GIFT_LINES_MAX = 6                    # tyle jeszcze miesci sie na pergaminie (ostatni y = 310)
+
+# Szerokosci klatek czcionki BUD_INFO.SFN dla znakow 0x20..0xE1, odczytane z pliku gry
+# (gfx\BUD_INFO.SFN w DATA\MINIMUM.RES, naglowek klatki znak-0x20: u16 szerokosc, u16 wysokosc).
+# Znaki 0xE2..0xFF nie maja w tej czcionce klatki: gra czyta wtedy naglowek spod offsetu 0
+# i dostaje szerokosc 0x1000, czyli jeden taki znak od razu przepelnia wiersz.
+GIFT_GLYPH_WIDTHS = bytes((
+    4,  3,  6,  4,  4,  4, 10,  3,  4,  4,  4,  4,  4,  4,  2,  4,   # 0x20
+    8,  5,  7,  7,  7,  7,  8,  7,  7,  8,  4,  4,  4,  4,  4,  5,   # 0x30
+    4,  7,  8,  7,  7,  7,  5,  7,  7,  4,  6,  7,  7, 10,  7,  8,   # 0x40
+    7,  8,  7,  6,  6,  7,  7, 12,  8,  8,  8,  4,  4,  4,  4,  4,   # 0x50
+    4,  7,  8,  7,  8,  7,  5,  7,  7,  2,  3,  7,  2, 12,  7,  8,   # 0x60
+    7,  7,  5,  5,  5,  7,  7, 12,  6,  7,  8,  4,  4,  4,  4,  4,   # 0x70
+    4,  7,  4,  4,  7,  4,  7,  4,  4,  4,  4,  4,  4,  7,  7,  7,   # 0x80
+    7,  7,  6,  4,  8,  7,  4,  4,  6,  8,  7,  4,  7,  4,  5,  4,   # 0x90
+    8,  8,  8,  8,  7,  7,  8,  8,  4,  4,  4,  4,  4,  4,  4,  4,   # 0xA0
+    4,  4,  4,  4,  4,  4,  4,  4,  4,  4,  4,  4,  4,  4,  4,  4,   # 0xB0
+    4,  4,  4,  4,  4,  4,  4,  4,  4,  4,  4,  4,  4,  4,  4,  4,   # 0xC0
+    4,  4,  4,  4,  4,  4,  4,  4,  4,  4,  4,  4,  4,  4,  4,  4,   # 0xD0
+    4,  7,                                                           # 0xE0
+))
+GIFT_GLYPH_FIRST, GIFT_GLYPH_LAST = 0x20, 0x20 + len(GIFT_GLYPH_WIDTHS) - 1
+GIFT_NO_GLYPH_WIDTH = 0x1000
+
+
+def gift_glyph_width(b):
+    if GIFT_GLYPH_FIRST <= b <= GIFT_GLYPH_LAST:
+        return GIFT_GLYPH_WIDTHS[b - GIFT_GLYPH_FIRST]
+    return GIFT_NO_GLYPH_WIDTH
+
+
+def gift_text_width(raw):
+    """Szerokosc tekstu w pikselach - jak Text_Width (0x206D0): znaki nowego wiersza pomijane,
+    za kazdym pozostalym jeden piksel odstepu, wynik obcinany do 16 bitow."""
+    w = 0
+    for b in raw:
+        if b != 0x0A:
+            w += gift_glyph_width(b) + GIFT_FONT_SPACING
+    return w & 0xFFFF
+
+
+def gift_find_wrap(raw):
+    """Text_FindWrap (0x20752): indeks znaku nowego wiersza, albo - gdy tekst przekroczy
+    szerokosc wiersza - indeks ostatniej spacji przed przekroczeniem (0, gdy spacji nie bylo),
+    albo -1 na koncu tekstu."""
+    acc, last = 0, 0
+    for i, b in enumerate(raw):
+        if b == 0x0A:
+            return i
+        if b == 0x20:
+            last = i
+        acc += gift_glyph_width(b) + GIFT_FONT_SPACING
+        if acc > GIFT_TEXT_WIDTH:
+            return last
+    return -1
+
+
+def gift_wrap(raw):
+    """Wiersze, na jakie gra podzieli tekst daru - jak Text_DrawAligned (0x208C7) dla
+    wyrownania 6, oraz czy przy tym gubi znaki.
+
+    Zwraca (wiersze, gubi_znaki). Gra nie dzieli slow: gdy w wierszu nie ma ani jednej spacji,
+    Text_FindWrap zwraca 0, wiec gra wypisuje pusty wiersz i wyrzuca pierwszy znak reszty
+    (`rest = rest[p+1:]`) - i tak az slowo sie zmiesci."""
+    lines, rest, lost = [], bytes(raw), False
+    while gift_text_width(rest) > GIFT_TEXT_WIDTH or 0x0A in rest:
+        p = gift_find_wrap(rest)
+        if p < 0:                     # w grze nie moze sie zdarzyc (petla sprawdza to samo)
+            break
+        if p == 0 and rest[:1] != b"\n":
+            lost = True
+        lines.append(rest[:p])
+        rest = rest[p + 1:]
+    lines.append(rest)
+    return lines, lost
+
+
+def gift_text_problems(text, with_sprite=True):
+    """(bledy, ostrzezenia) tekstu daru. Blad = pliku nie wolno zapisac."""
+    raw, bad = mazovia_encode(text)
+    errors, warnings = [], []
+    if bad:
+        errors.append("Znaki, których gra nie ma w swojej stronie kodowej: "
+                      + " ".join(bad) + ".")
+    if b"%" in raw:
+        errors.append("Znak % jest zakazany: gra podaje tekst daru jako wzorzec do printf, "
+                      "więc % zostałby potraktowany jak polecenie formatowania i okienko "
+                      "pokazałoby przypadkową liczbę albo gra by się wysypała.")
+    no_glyph = sorted({b for b in raw if gift_glyph_width(b) == GIFT_NO_GLYPH_WIDTH and b != 0x0A})
+    if no_glyph:
+        errors.append("Znaki, których nie ma w czcionce okienka daru (gra nie narysuje ich, "
+                      "a w dodatku złamie na nich wiersz): "
+                      + " ".join(mazovia_decode(bytes([b])) for b in no_glyph) + ".")
+    lines, lost = gift_wrap(raw)
+    if not raw.strip():
+        warnings.append("Tekst jest pusty – gra pokaże okienko z samym obrazkiem.")
+    if lost:
+        warnings.append("Jedno ze słów nie mieści się w wierszu. Gra nie dzieli słów: "
+                        "wypisuje pusty wiersz i gubi po jednym znaku, aż słowo się zmieści.")
+    if len(lines) > GIFT_LINES_MAX:
+        warnings.append(f"Tekst zajmie {len(lines)} wierszy, a na pergaminie mieści się "
+                        f"{GIFT_LINES_MAX}. Wiersze od {GIFT_LINES_MAX + 1}. gra narysuje poniżej "
+                        "okienka i zostaną na mapie, dopóki gra jej nie przerysuje.")
+    elif len(lines) > GIFT_LINES_CLEAN:
+        msg = (f"Tekst zajmie {len(lines)} wierszy, a bez kłopotu mieszczą się "
+               f"{GIFT_LINES_CLEAN} (tyle ma najdłuższy tekst oryginału). ")
+        msg += ("Dalsze przejdą przez obrazek daru." if with_sprite else
+                "Dalsze wejdą w dolny pas okienka, gdzie zwykle jest obrazek daru.")
+        if len(lines) == GIFT_LINES_MAX:
+            msg += f" {GIFT_LINES_MAX}. wiersz wystaje też poniżej prawej połowy pergaminu."
+        warnings.append(msg)
+    return errors, warnings
 
 
 # ---------------------------------------------------------------- rodzaje danych
@@ -406,6 +561,167 @@ class TechTable:
             data[self.addr(uid, True)] = type2 & 0xFF
 
 
+class LeFixups:
+    """Tablica relokacji (fixupow) pliku LE - potrzebna, zeby zmienic wskaznik w danych gry.
+
+    W pliku .exe wskaznik jest zapisany jako offset wewnatrz obiektu (sekcji). Prawdziwy adres
+    wpisuje do pamieci loader DOS/4GW i bierze go NIE z tych bajtow, a z wpisu relokacji:
+    dla kazdego wskaznika jest w tablicy relokacji wpis {gdzie, w ktorym obiekcie, jaki offset}.
+    Zmiana samych bajtow w danych nic by wiec nie dala - loader nadpisalby je z powrotem.
+    Dlatego program zmienia oba miejsca.
+
+    Format (re/docs/02-executable-format.md): naglowek LE lezy pod offsetem z dworda 0x3C pliku,
+    strony plikowe od pola 0x80, tablica relokacji stron od 0x68 (liczba_stron+1 dwordow,
+    offsety w tablicy wpisow od 0x6C). Wpis:
+        u8  typ         (dolne 4 bity; 0x20 = dalej lista zrodel)
+        u8  flagi       (0x10 = 32-bitowy offset celu, 0x40 = 16-bitowy numer obiektu)
+        s16 offset zrodla w stronie (albo u8 licznik + tyle s16, gdy typ & 0x20)
+        u8/u16 numer obiektu
+        u16/u32 offset celu (brak przy typie 2 - relokacji selektora)
+    Wpis relokacji wskaznika lezacego na granicy stron jest wymieniony w obu stronach, dlatego
+    `find` przeglada takze strone przed i po."""
+    SRC_LIST = 0x20
+    FLAG_TARGET32 = 0x10
+    FLAG_OBJ16 = 0x40
+    TYPE_SELECTOR = 0x02
+    TYPE_OFFSET32 = 0x07
+    # ile bajtow pod offsetem zrodla wpisuje loader (typ relokacji -> rozmiar)
+    SRC_SIZE = {0x02: 2, 0x05: 2, 0x06: 6, 0x07: 4, 0x08: 4}
+
+    def __init__(self, data):
+        self.error = None
+        self._cache = {}
+        try:
+            self._parse(data)
+        except (struct.error, IndexError, ValueError) as e:
+            self.error = f"nie udało się odczytać tablicy relokacji pliku: {e}"
+
+    def _parse(self, data):
+        le = struct.unpack_from("<I", data, 0x3C)[0]
+        if bytes(data[le:le + 2]) != b"LE":
+            raise ValueError(f"brak nagłówka LE pod 0x{le:X}")
+        def field(off):
+            return struct.unpack_from("<I", data, le + off)[0]
+
+        self.pages = field(0x14)
+        self.obj_page_table = le + field(0x48)
+        self.fixup_page_table = le + field(0x68)
+        self.fixup_records = le + field(0x6C)
+        self.first_page = field(0x80)
+        if self.pages < 1 or self.first_page >= len(data):
+            raise ValueError("puste albo niespójne pola nagłówka")
+        # strona logiczna (indeks w tablicy relokacji) -> strona plikowa i odwrotnie
+        self.phys = [0] * (self.pages + 1)
+        self.logical = {}
+        for n in range(1, self.pages + 1):
+            e = self.obj_page_table + (n - 1) * 4
+            ph = (data[e] << 16) | (data[e + 1] << 8) | data[e + 2]
+            self.phys[n] = ph
+            self.logical.setdefault(ph, n)
+
+    def page_offset(self, page):
+        """Offset w pliku, pod ktory loader wczytuje strone logiczna `page`."""
+        return self.first_page + (self.phys[page] - 1) * 0x1000
+
+    def records(self, data, page):
+        """Wpisy relokacji strony logicznej `page` jako lista slownikow.
+
+        Wynik jest zapamietywany: rozmiary i pozycje wpisow sie nie zmieniaja (program zmienia
+        tylko offsety celow, w miejscu), wiec raz odczytana lista pozostaje wazna."""
+        if page in self._cache:
+            return self._cache[page]
+        start = struct.unpack_from("<I", data, self.fixup_page_table + (page - 1) * 4)[0]
+        end = struct.unpack_from("<I", data, self.fixup_page_table + page * 4)[0]
+        out, o, stop = [], self.fixup_records + start, self.fixup_records + end
+        while o < stop:
+            at = o
+            typ, flags = data[o], data[o + 1]
+            o += 2
+            if typ & self.SRC_LIST:
+                count = data[o]
+                o += 1
+                srcs = list(struct.unpack_from(f"<{count}h", data, o))
+                o += 2 * count
+            else:
+                srcs = [struct.unpack_from("<h", data, o)[0]]
+                o += 2
+            if flags & self.FLAG_OBJ16:
+                obj = struct.unpack_from("<H", data, o)[0]
+                o += 2
+            else:
+                obj = data[o]
+                o += 1
+            target_at, target = None, None
+            if (typ & 0x0F) != self.TYPE_SELECTOR:
+                target_at = o
+                if flags & self.FLAG_TARGET32:
+                    target = struct.unpack_from("<I", data, o)[0]
+                    o += 4
+                else:
+                    target = struct.unpack_from("<H", data, o)[0]
+                    o += 2
+            if o > stop:
+                raise ValueError(f"wpis relokacji pod 0x{at:X} wychodzi za koniec listy strony {page}")
+            out.append({"at": at, "type": typ & 0x0F, "flags": flags, "obj": obj,
+                        "srcs": srcs, "target_at": target_at, "target": target})
+        self._cache[page] = out
+        return out
+
+    def find(self, data, offset):
+        """Wpisy relokacji, ktore wpisuja adres pod `offset` (offset w pliku)."""
+        if self.error:
+            return []
+        page = self.logical.get((offset - self.first_page) // 0x1000 + 1)
+        if page is None:
+            return []
+        out = []
+        try:
+            for p in (page - 1, page, page + 1):
+                if not 1 <= p <= self.pages:
+                    continue
+                base = self.page_offset(p)
+                for rec in self.records(data, p):
+                    if any(base + src == offset for src in rec["srcs"]):
+                        out.append(rec)
+        except (struct.error, IndexError, ValueError) as e:
+            self.error = f"nie udało się odczytać tablicy relokacji pliku: {e}"
+            return []
+        return out
+
+    def sources_in(self, data, start, end):
+        """Offsety w pliku z zakresu [start, end), pod ktore loader wpisuje jakis adres."""
+        if self.error:
+            return []
+        first = self.logical.get((start - self.first_page) // 0x1000 + 1)
+        last = self.logical.get((end - 1 - self.first_page) // 0x1000 + 1)
+        if first is None or last is None:
+            self.error = f"obszar 0x{start:X}–0x{end:X} nie leży w stronach pliku"
+            return []
+        out = []
+        try:
+            for p in range(max(1, first - 1), min(self.pages, last + 1) + 1):
+                base = self.page_offset(p)
+                for rec in self.records(data, p):
+                    size = self.SRC_SIZE.get(rec["type"], 4)
+                    for src in rec["srcs"]:
+                        if base + src + size > start and base + src < end:
+                            out.append(base + src)
+        except (struct.error, IndexError, ValueError) as e:
+            self.error = f"nie udało się odczytać tablicy relokacji pliku: {e}"
+            return []
+        return sorted(set(out))
+
+    def write_target(self, data, rec, target):
+        """Nowy offset celu we wpisie relokacji."""
+        if rec["flags"] & self.FLAG_TARGET32:
+            struct.pack_into("<I", data, rec["target_at"], target)
+        else:
+            if not 0 <= target <= 0xFFFF:
+                raise ValueError(f"offset 0x{target:X} nie zmieści się w 16-bitowym wpisie "
+                                 f"relokacji pod 0x{rec['at']:X}")
+            struct.pack_into("<H", data, rec["target_at"], target)
+
+
 class GiftTable:
     """Jedna z czterech tabel losowania darow swiatyni / miejsca kultu.
 
@@ -420,8 +736,9 @@ class GiftTable:
     w pierwszy wpis (ma o jedna szanse wiecej, niz wynika z wagi), a ostatni wpis traci jedna
     szanse - metoda `chances` liczy to dokladnie tak samo jak gra.
 
-    Tekstow nie zmieniamy: kazdy wpis ma wlasne napisy o stalej dlugosci, a numer daru nie ma
-    z nimi nic wspolnego, wiec po zmianie efektu komunikat w grze zostaje stary."""
+    Numer daru nie ma nic wspolnego z tekstem wpisu, wiec po zmianie efektu komunikat w grze
+    zostaje stary. Same teksty edytuje GiftTexts - wszystkie cztery tabele dziela jeden obszar
+    bajtow, wiec jest to jedno osobne znalezisko."""
     kind = "gift_table"
     STRIDE = 24
     MAX_ENTRIES = 32
@@ -509,6 +826,140 @@ class GiftTable:
         if out:
             out[0] += 1
         return out
+
+
+class GiftTexts:
+    """Teksty darow wszystkich czterech tabel - jeden wspolny obszar bajtow w pliku.
+
+    Wpis tabeli ma trzy wskazniki na tekst: polski, angielski i trzeci (w tym pliku zawsze
+    pusty - gra wybiera go po numerze jezyka, a polska wersja ma numer 0, czyli tekst polski).
+    Wszystkie 168 wskaznikow prowadza w jeden ciagly obszar, ktory w oryginale jest wypelniony
+    co do bajtu: zadnego tekstu nie da sie wydluzyc w miejscu.
+
+    Dlatego przy zapisie program uklada cala pule od nowa: teksty jeden za drugim, powtarzajace
+    sie tylko raz (w oryginale powtorzen jest 56, same puste trzecie teksty to 56 bajtow -
+    po ulozeniu oryginal zajmuje 6 978 z 14 732 bajtow, czyli na dluzsze teksty jest ponad
+    dwa razy tyle miejsca, ile zajmuja). Kazdy wskaznik to dwa miejsca do zmiany: dword we
+    wpisie tabeli i offset celu w tablicy relokacji LE (patrz LeFixups).
+
+    Czego program nie robi: nie przenosi puli ani jej nie powieksza. Offsety w relokacjach tych
+    wskaznikow sa 16-bitowe, a cala pula lezy ponizej 0x10000 obiektu danych - wyjscie poza nia
+    wymagaloby 32-bitowych wpisow, czyli przesuniecia calej tablicy relokacji."""
+    kind = "gift_texts"
+    LANG_COUNT = 3
+
+    def __init__(self, key, title, tables, pool, text_delta, note=""):
+        self.key, self.title, self.note = key, title, note
+        self.tables = tables                      # lista GiftTable korzystajacych z tej puli
+        self.pool_start, self.pool_end = pool      # offsety w pliku: [start, end)
+        self.text_delta = text_delta
+
+    @property
+    def pool_size(self):
+        return self.pool_end - self.pool_start
+
+    def pointers(self, data):
+        """Lista (tabela, numer wpisu, numer jezyka, offset wskaznika w pliku, wskaznik)."""
+        out = []
+        for t in self.tables:
+            for i in range(t.count(data)):
+                for k in range(self.LANG_COUNT):
+                    at = t.entry_offset(i) + 12 + 4 * k
+                    out.append((t, i, k, at, struct.unpack_from("<I", data, at)[0]))
+        return out
+
+    def text_at(self, data, ptr):
+        """(offset w pliku, bajty) tekstu, na ktory pokazuje wskaznik `ptr`."""
+        off = ptr + self.text_delta
+        end = off
+        while end < len(data) and data[end] != 0:
+            end += 1
+        return off, bytes(data[off:end])
+
+    def check(self, data):
+        if self.pool_end > len(data):
+            return f"0x{self.pool_start:X}: obszar tekstów wychodzi za koniec pliku"
+        fx = LeFixups(data)
+        if fx.error:
+            return fx.error
+        for t, i, k, at, ptr in self.pointers(data):
+            if ptr == 0:
+                return f"0x{at:X}: wpis {i + 1} tabeli „{t.title}” nie ma tekstu {k + 1}"
+            off, raw = self.text_at(data, ptr)
+            if not (self.pool_start <= off and off + len(raw) + 1 <= self.pool_end):
+                return (f"0x{at:X}: tekst {k + 1} wpisu {i + 1} tabeli „{t.title}” leży pod "
+                        f"0x{off:X}, poza obszarem tekstów darów "
+                        f"(0x{self.pool_start:X}–0x{self.pool_end:X})")
+            recs = fx.find(data, at)
+            if fx.error:
+                return fx.error
+            if not recs:
+                return f"0x{at:X}: brak wpisu relokacji dla wskaźnika tekstu"
+            for rec in recs:
+                if rec["type"] != LeFixups.TYPE_OFFSET32 or rec["target"] != ptr:
+                    return (f"0x{at:X}: wpis relokacji pod 0x{rec['at']:X} nie wygląda jak "
+                            f"32-bitowy wskaźnik na ten tekst")
+        used = fx.sources_in(data, self.pool_start, self.pool_end)
+        if fx.error:
+            return fx.error
+        if used:
+            return (f"0x{used[0]:X}: w obszarze tekstów darów loader wpisuje adres "
+                    f"(tekst zostałby nadpisany)")
+        return None
+
+    def read(self, data):
+        """{klucz tabeli: [[tekst polski, angielski, trzeci], ...]}"""
+        out = {t.key: [] for t in self.tables}
+        for t, i, k, at, ptr in self.pointers(data):
+            row = out[t.key]
+            if k == 0:
+                row.append([])
+            row[i].append(mazovia_decode(self.text_at(data, ptr)[1]))
+        return out
+
+    def layout(self, data, texts):
+        """(offset w pliku kazdego tekstu, ile bajtow zajmie cala pula) dla podanych tekstow.
+
+        Teksty takie same dostaja jeden wspolny offset - gra ich nie zapisuje, wiec dzielenie
+        bajtow jest dla niej niewidoczne."""
+        offsets, off = {}, self.pool_start
+        for t, i, k, at, ptr in self.pointers(data):
+            raw = self._raw(texts, t, i, k, data, ptr)
+            if raw not in offsets:
+                offsets[raw] = off
+                off += len(raw) + 1               # + bajt zerowy koncza tekst
+        return offsets, off - self.pool_start
+
+    def _raw(self, texts, t, i, k, data, ptr):
+        """Bajty tekstu do zapisania: z podanych tekstow, a gdy ich tam nie ma - z pliku."""
+        rows = texts.get(t.key) if texts else None
+        if rows is not None and i < len(rows) and k < len(rows[i]):
+            return mazovia_encode(rows[i][k])[0]
+        return self.text_at(data, ptr)[1]
+
+    def used(self, data, texts):
+        return self.layout(data, texts)[1]
+
+    def write(self, data, texts):
+        if self.read(data) == texts:
+            return                                # nic nie zmieniono - nie ruszamy pliku
+        offsets, used = self.layout(data, texts)
+        if used > self.pool_size:
+            raise ValueError(f"Teksty darów zajmują {used} bajtów, a w pliku jest na nie miejsce "
+                             f"na {self.pool_size} bajtów. Trzeba skrócić któryś tekst.")
+        fx = LeFixups(data)
+        if fx.error:
+            raise ValueError(fx.error)
+        plan = [(at, self._raw(texts, t, i, k, data, ptr))
+                for t, i, k, at, ptr in self.pointers(data)]
+        data[self.pool_start:self.pool_end] = bytes(self.pool_size)
+        for raw, off in offsets.items():
+            data[off:off + len(raw)] = raw        # bajt zerowy jest juz na swoim miejscu
+        for at, raw in plan:
+            ptr = offsets[raw] - self.text_delta
+            struct.pack_into("<I", data, at, ptr)
+            for rec in fx.find(data, at):
+                fx.write_target(data, rec, ptr)
 
 
 class GiftAmount:
@@ -768,11 +1219,36 @@ DESC_NO_GROUND_ON_FLY = (
 # Teksty darow leza w pliku pod "wskaznik + DOS_TEXT_DELTA" (loader DOS/4GW dolicza baze).
 DOS_TEXT_DELTA = 0x13C400
 
+# Caly obszar tekstow czterech tabel darow: od pierwszego bajtu tekstu pierwszego wpisu tabeli
+# swiatyni gracza (0x142C7A, wskaznik 0x687A) do bajtu za ostatnim tekstem tabeli miejsca kultu
+# komputera (0x146606, wskaznik 0xA206) - 14 732 bajty wypelnione co do jednego.
+DOS_GIFT_POOL = (0x142C7A, 0x146606)
+
 DESC_GIFTS = (
     'Co i z jakim prawdopodobieństwem można dostać w świątyni (religia chrześcijańska) i w miejsc'
     'u kultu (religia pogańska). Gra ma cztery osobne tabele – dla każdej religii inną dla gracz'
     'a i inną dla komputera – i wybiera je po religii właściciela armii, która weszła do świątyni.'
 )
+
+DESC_GIFT_TEXTS = (
+    'Tekst pokazywany w okienku daru należy do wpisu tabeli, nie do numeru daru: po zmianie efektu '
+    'komunikat zostaje stary, więc trzeba go poprawić tutaj. Wszystkie teksty czterech tabel leżą '
+    'w pliku w jednym ciągu, jeden za drugim – dlatego mają wspólny limit miejsca, a nie własną '
+    'długość każdy. Program ułoży je przy zapisie od nowa (powtarzające się zapisze raz) '
+    'i poprawi wskaźniki wpisów razem z wpisami relokacji, z których loader gry bierze adresy.'
+)
+
+
+def _dos_gift_tables():
+    return [
+        GiftTable("gifts_christian_human", "Świątynia – gracz", 0x16203C, DOS_TEXT_DELTA, True),
+        GiftTable("gifts_christian_ai", "Świątynia – komputer", 0x16233C, DOS_TEXT_DELTA, False),
+        GiftTable("gifts_pagan_human", "Miejsce kultu – gracz", 0x1621D4, DOS_TEXT_DELTA, True),
+        GiftTable("gifts_pagan_ai", "Miejsce kultu – komputer", 0x1624A4, DOS_TEXT_DELTA, False),
+    ]
+
+
+_DOS_GIFT_TABLES = _dos_gift_tables()
 
 
 def _dos_gift_amounts():
@@ -821,10 +1297,9 @@ PROFILES = {
                           Instr(0x94C13, "BA"),
                           note="Używany zamiast zwykłej listy, gdy pole gry 0x222F1 ma wartość 2, 6, 12 lub 16 "
                                "(najpewniej numer/typ misji)."),
-            GiftTable("gifts_christian_human", "Świątynia – gracz", 0x16203C, DOS_TEXT_DELTA, True),
-            GiftTable("gifts_christian_ai", "Świątynia – komputer", 0x16233C, DOS_TEXT_DELTA, False),
-            GiftTable("gifts_pagan_human", "Miejsce kultu – gracz", 0x1621D4, DOS_TEXT_DELTA, True),
-            GiftTable("gifts_pagan_ai", "Miejsce kultu – komputer", 0x1624A4, DOS_TEXT_DELTA, False),
+            *_DOS_GIFT_TABLES,
+            GiftTexts("gift_texts", "Teksty darów świątyń i miejsc kultu", _DOS_GIFT_TABLES,
+                      DOS_GIFT_POOL, DOS_TEXT_DELTA),
             _dos_gift_amounts(),
             UnitDwordList("port", "Port", 0x163E0C, 12, Instr(0x9952A, "BA")),
             UnitByteSet("forge", "Wymaga kuźni", 0x161F7C, 12),

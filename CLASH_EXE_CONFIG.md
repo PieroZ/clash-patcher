@@ -25,6 +25,7 @@ Przy otwarciu każde znalezisko jest sprawdzane – jeśli bajty pod adresem nie
 | | Dary: świątynia – komputer (14 wpisów) | 0x16233C | — |
 | | Dary: miejsce kultu – gracz (14 wpisów) | 0x1621D4 | — |
 | | Dary: miejsce kultu – komputer (12 wpisów) | 0x1624A4 | — |
+| | Opisy darów: wspólny obszar tekstów czterech tabel (14 732 B) + wskaźniki wpisów i ich relokacje | 0x142C7A–0x146606 | — |
 | | Siła darów: 17 liczb w kodzie (niżej) | 0x94B1F … 0x95499 | — |
 | | Port (12 × 4 B) | 0x163E0C, 0x9952B | 0x115DA8, 0x42B0A |
 | Kuźnia, warsztat, poziomy | Jednostki wymagające kuźni (bajty, koniec FF) | 0x161F7C | 0x113E80 |
@@ -52,6 +53,9 @@ Wystarczy dopisać wpis jednego z gotowych rodzajów:
   po bajtach rozpoznawczych (zakładka „Mury”),
 - `GiftTable(klucz, tytuł, offset, przesunięcie_tekstów, czy_gracz)` – tabela losowania darów
   świątyni (zakładka „Świątynia i port”),
+- `GiftTexts(klucz, tytuł, [GiftTable, …], (początek, koniec), przesunięcie_tekstów)` – teksty
+  tych tabel jako jeden wspólny obszar bajtów; przy zapisie układa je od nowa i poprawia wskaźniki
+  razem z wpisami relokacji (klasa pomocnicza `LeFixups`),
 - `GiftAmounts(klucz, tytuł, [GiftAmount(...), …])` – zbiór liczb wpisanych w kod, pokazywany
   jako jedna lista; `GiftAmount` dostaje `Instr` (1 bajt) albo `Instr32` (4 bajty ze znakiem),
 - `TechTable`, `CheatTable` – jak w istniejących wpisach,
@@ -105,10 +109,63 @@ Tabele leżą w pliku jedna za drugą, więc **liczby wpisów nie da się zmieni
 tabel i dopisywania relokacji. Edytowalne są numer daru, obrazek i waga każdego istniejącego wpisu;
 waga 0 praktycznie wyłącza wpis.
 
-Tekstów program nie zmienia. Każdy wpis ma własne napisy o stałej długości, a numer daru nie ma
-z nimi nic wspólnego – po zmianie efektu komunikat w grze zostaje stary. Dlatego ostatnia kolumna
-tabeli pokazuje tekst, który gra naprawdę wypisze (czytany z pliku, kodowanie Mazovia; wskaźnik
-z wpisu + 0x13C400 = offset tekstu w pliku).
+Numer daru nie ma nic wspólnego z tekstem wpisu – po zmianie efektu komunikat w grze zostaje stary.
+Dlatego ostatnia kolumna tabeli pokazuje tekst, który gra naprawdę wypisze, a przycisk „Zmień…”
+pozwala go poprawić (jak – w następnym punkcie).
+
+### Opisy darów (teksty)
+
+Każdy wpis ma trzy wskaźniki na tekst: polski, angielski i trzeci. Gra wybiera je numerem języka,
+a polska wersja ma język 0, więc pokazuje tekst polski; trzeci wskaźnik prowadzi w tym pliku zawsze
+do tekstu pustego. **Offset tekstu w pliku = wskaźnik
+z wpisu + 0x13C400** (loader DOS/4GW dolicza bazę obiektu danych). Kodowanie to Mazovia.
+
+**Wspólny obszar.** Wszystkie 168 wskaźników (56 wpisów × 3) prowadzą w jeden ciągły obszar
+**0x142C7A–0x146606**, czyli 14 732 bajty, wypełniony co do bajtu: tekst kończy się zerem, a zaraz
+za nim zaczyna się następny. Żadnego tekstu nie da się więc wydłużyć w miejscu. Program traktuje
+ten obszar jako pulę i przy zapisie układa go od nowa:
+
+* teksty jeden za drugim, od 0x142C7A, każdy z bajtem zerowym na końcu;
+* **takie same teksty zapisywane są raz** – w oryginale powtórzeń jest 56 (te same opisy mają np.
+  tabele gracza i komputera), a same puste trzecie teksty to 56 bajtów. Dzięki temu oryginalne
+  teksty zajmują po ułożeniu **6 978 z 14 732 bajtów**: na dłuższe opisy jest ponad dwa razy tyle
+  miejsca, ile zajmują. Program pokazuje zajętość pod tabelą i w okienku edycji, a zapisu, który
+  by się nie zmieścił, nie wykona (błąd zamiast uszkodzonego pliku);
+* reszta puli jest zerowana, więc kolejne zapisy tych samych tekstów nie zmieniają już ani bajtu.
+
+**Dlaczego trzeba ruszyć relokacje.** Wskaźnik w pliku to offset wewnątrz obiektu danych, ale
+prawdziwy adres wpisuje do pamięci loader DOS/4GW i bierze go **nie z tych bajtów, a z wpisu
+relokacji**: `{gdzie, obiekt, offset celu}`. Zmiana samego dworda we wpisie tabeli nic by nie dała –
+loader nadpisałby go z powrotem. Program zmienia oba miejsca: dword we wpisie tabeli i 16-bitowy
+offset celu w tablicy relokacji. Wszystkie 168 wskaźników mają tam wpis typu 7 (32-bitowy offset)
+z 16-bitowym celem, a cała pula leży poniżej 0x10000 obiektu danych, więc rozmiary wpisów
+relokacji się nie zmieniają i nic w pliku się nie przesuwa. Przy otwarciu pliku program
+sprawdza to wszystko (każdy wskaźnik ma swój wpis relokacji o zgodnym celu, każdy tekst leży w puli,
+a w samej puli loader nie wpisuje żadnego adresu) i przy pierwszej niezgodności wyłącza edycję tekstów,
+zamiast psuć plik. **Pula nie jest przenoszona ani powiększana** – wyjście poza nią wymagałoby 32-bitowych
+celów w relokacjach, czyli przesunięcia całej tablicy relokacji.
+
+**Jak gra rysuje ten tekst.** `TempleWindow` (0x5B9DC) rysuje pergamin z `temple.s32` (klatka 0x16,
+329×178 px, od y = 150, i klatka 0x17 obok niej, 311×168 px, od y = 156 – razem x 0–639,
+y 150–327), obrazek daru (wszystkie klatki 58×39 px) w (294, 285), czyli x 294–351, y 285–323,
+i tekst czcionką 0x11 między x = 0x46 i x = 0x239, od y = 0xD2, z wyrównaniem 6: zawijanie po słowach, każdy wiersz wyśrodkowany (`Text_DrawAligned` 0x208C7). Program liczy to dokładnie tak samo – ma w sobie szerokości klatek tej czcionki – i pokazuje gotowy podgląd wierszy. Stąd ostrzeżenia:
+
+| Liczba wierszy | Co się stanie |
+|---|---|
+| 1–4 | jak w oryginale (najdłuższy tekst oryginału, MIECZ GŁUPCÓW, ma 226 znaków i 4 wiersze) |
+| 5–6 | 5. wiersz zaczyna się na y = 290, a 6. na y = 310, więc przechodzą przez obrazek daru, a szósty wystaje poniżej dolnej krawędzi prawej połowy pergaminu (y 323) |
+| 7 i dalsze | gra rysuje je poniżej okienka, a okienko przy zamykaniu odtwarza tylko y 150–327 – resztę widać na mapie, dopóki gra jej nie przerysuje |
+
+Dwie pułapki, których program nie przepuszcza:
+
+* **Znak `%`** – gra podaje tekst (i każdy złamany wiersz osobno) jako **wzorzec do `printf`**
+  (`Text_PrintfAligned`), więc `%` byłby potraktowany jak polecenie formatowania: w okienku
+  pojawiłaby się przypadkowa liczba albo gra by się wysypała.
+* **Znaki bez klatki w tej czcionce** (0xE2–0xFF strony Mazovia) – gra czyta wtedy nagłówek klatki
+  spod offsetu 0, dostaje szerokość 0x1000 i łamie wiersz na takim znaku, nic nie rysując.
+  Wszystkie polskie litery klatki mają.
+
+Enter w polu edycji wstawia bajt 0x0A, czyli wymusza złamanie wiersza. Słowa dłuższego od wiersza gra nie dzieli: wypisuje pusty wiersz i gubi po jednym znaku, aż słowo się zmieści – program o tym ostrzega.
 
 Obrazek (pole +8) to numer klatki, a zarazem numer dźwięku
 (przy `-1` gra bierze dźwięk 7 i nie rysuje obrazka). Lista w programie podaje 0–21 i 24, bo

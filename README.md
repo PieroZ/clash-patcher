@@ -21,6 +21,12 @@ Obsługiwane wersje (rozpoznawane po rozmiarze pliku):
   wszystkie dary świątyń i miejsc kultu (co, z jakim prawdopodobieństwem i z jakim przedmiotem –
   osobno dla obu religii oraz dla gracza i komputera) i siła każdego daru (złoto, morale, zmęczenie,
   zdrowie, doświadczenie, liczba jednostek w nowym oddziale).
+- **Opisy darów** – treść komunikatu, który gra pokazuje w okienku daru świątyni i miejsca kultu
+  (osobno polski i angielski, przycisk „Zmień…” w tabeli darów). Program pokazuje na bieżąco, jak gra
+  złamie wiersze tą samą czcionką i szerokością co w grze, ostrzega, gdy tekst wyjdzie za pergamin
+  albo na obrazek daru, i pilnuje wspólnego limitu miejsca – wszystkie opisy leżą w pliku w jednym
+  ciągu, więc dłuższy opis trzeba opłacić skróceniem innego (albo tekstu angielskiego, którego polska
+  wersja gry nie pokazuje).
 - **Kuźnia, warsztat, poziomy** – które jednostki wymagają kuźni / warsztatu i jaki minimalny poziom zamku.
 - **Mury** – koszt (0–255 sztuk złota) i czas (1–255 tur) rozbudowy muru do 2. i 3. poziomu.
 - **Punkty akcji** – koszt i wymagane minimum PA przy dzieleniu i łączeniu oddziałów.
