@@ -5,6 +5,7 @@ Znaleziska (adresy, rodzaje danych) sa w clash_exe_patches.py.
 """
 import os
 import sys
+import textwrap
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -109,12 +110,538 @@ class DwordListBox(QGroupBox):
         self.on_change()
 
 
+def fit_table_height(table):
+    """Tabela pokazuje wszystkie wiersze naraz - przewija ja dopiero zakladka.
+    Bez gornego ograniczenia: gdy wyliczona wysokosc okaze sie za mala, zostanie puste miejsce,
+    a nie obciety wiersz."""
+    table.resizeRowsToContents()
+    h = table.horizontalHeader().height() + 2 * table.frameWidth() + 2
+    for r in range(table.rowCount()):
+        h += table.rowHeight(r)
+    table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    table.setMinimumHeight(h)
+
+
+def read_only_item(text=""):
+    item = QTableWidgetItem(text)
+    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+    return item
+
+
+def pct(part, total):
+    if total <= 0:
+        return "–"
+    return f"{100.0 * part / total:.1f}".replace(".", ",") + "%"
+
+
+class GiftTextPane(QWidget):
+    """Jeden tekst daru: pole do pisania, podglad zlamania wierszy i ostrzezenia."""
+
+    def __init__(self, note, on_change):
+        super().__init__()
+        self.on_change = on_change
+        self._loading = False
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 6, 0, 0)
+        lay.addWidget(note_label(note))
+        self.edit = QPlainTextEdit()
+        self.edit.setTabChangesFocus(True)
+        self.edit.textChanged.connect(self._changed)
+        lay.addWidget(self.edit, 3)
+        lay.addWidget(QLabel("Tak gra złamie wiersze w okienku daru:"))
+        self.preview = QPlainTextEdit()
+        self.preview.setReadOnly(True)
+        self.preview.setLineWrapMode(QPlainTextEdit.NoWrap)
+        lay.addWidget(self.preview, 2)
+        self.info = QLabel("")
+        self.info.setWordWrap(True)
+        lay.addWidget(self.info)
+        self.warn = QLabel("")
+        self.warn.setWordWrap(True)
+        self.warn.setStyleSheet("color: #b9770e;")
+        lay.addWidget(self.warn)
+        self.err = QLabel("")
+        self.err.setWordWrap(True)
+        self.err.setStyleSheet("color: #c0392b;")
+        lay.addWidget(self.err)
+
+    def text(self):
+        return self.edit.toPlainText()
+
+    def load(self, text):
+        self._loading = True
+        self.edit.setPlainText(text)
+        self._loading = False
+        self.update_view()
+
+    def errors(self, with_sprite=True):
+        return cp.gift_text_problems(self.text(), with_sprite)[0]
+
+    def update_view(self, with_sprite=True):
+        raw, _ = cp.mazovia_encode(self.text())
+        lines, _ = cp.gift_wrap(raw)
+        out = []
+        for i, ln in enumerate(lines):
+            mark = " ←" if i >= cp.GIFT_LINES_CLEAN else ""
+            out.append(f"{i + 1}. {cp.mazovia_decode(ln)}{mark}")
+        self.preview.setPlainText("\n".join(out))
+        widest = max((cp.gift_text_width(ln) for ln in lines), default=0)
+        self.info.setText(f"{len(lines)} {cp.lines_word(len(lines))}, najszerszy "
+                          f"{widest} z {cp.GIFT_TEXT_WIDTH} px, {len(raw)} B.")
+        errors, warnings = cp.gift_text_problems(self.text(), with_sprite)
+        self.warn.setText(" ".join(warnings))
+        self.warn.setVisible(bool(warnings))
+        self.err.setText(" ".join(errors))
+        self.err.setVisible(bool(errors))
+
+    def _changed(self):
+        if not self._loading:
+            self.on_change()
+
+
+class GiftTextDialog(QDialog):
+    """Edytor obu tekstow jednego wpisu tabeli darow."""
+
+    def __init__(self, parent, title, texts, original, with_sprite, used, pool):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.original = original
+        self.with_sprite = with_sprite
+        self.used, self.pool = used, pool
+        lay = QVBoxLayout(self)
+        lay.addWidget(note_label(
+            "Tekst polski - numer języka 0. Tekst angielski zajmuje miejsce w tej samej puli bajtów,"
+            " więc jego skrócenie zwalnia miejsce na dłuższy tekst polski."
+            "Enter wymusza złamanie wiersza, znak % jest zakazany"))
+        self.tabs = QTabWidget()
+        self.panes = [
+            GiftTextPane("Tekst, który zobaczy gracz w polskiej wersji gry.", self._changed),
+            GiftTextPane("Tekst wersji angielskiej – w polskiej wersji nigdy się nie pokaże.",
+                         self._changed),
+        ]
+        self.tabs.addTab(self.panes[0], "Tekst polski")
+        self.tabs.addTab(self.panes[1], "Tekst angielski")
+        lay.addWidget(self.tabs)
+        self.budget = QLabel("")
+        self.budget.setWordWrap(True)
+        lay.addWidget(self.budget)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.restore = bb.addButton("Przywróć", QDialogButtonBox.ResetRole)
+        self.restore.setToolTip("Wstawia teksty z pliku na dysku")
+        self.restore.clicked.connect(self._restore)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        self.ok = bb.button(QDialogButtonBox.Ok)
+        lay.addWidget(bb)
+        for pane, text in zip(self.panes, texts):
+            pane.load(text)
+        self.resize(820, 620)
+        self._changed()
+
+    def texts(self):
+        return [pane.text() for pane in self.panes]
+
+    def _restore(self):
+        for pane, text in zip(self.panes, self.original):
+            pane.load(text)
+        self._changed()
+
+    def _changed(self):
+        self.panes[0].update_view(self.with_sprite)
+        self.panes[1].update_view(self.with_sprite)
+        used = self.used(self.texts())
+        over = used - self.pool
+        self.budget.setText(f"Wszystkie teksty darów zajmą {used} z {self.pool} bajtów."
+                            + (f" Trzeba skrócić teksty o {over} B." if over > 0 else
+                               f" Wolne: {-over} B."))
+        self.budget.setStyleSheet("color: #c0392b;" if over > 0 else "")
+        bad = self.panes[0].errors(self.with_sprite) or self.panes[1].errors(self.with_sprite)
+        self.ok.setEnabled(not bad and over <= 0)
+
+
+class GiftTableBox(QWidget):
+    """Jedna z czterech tabel losowania darow: numer daru, przedmiot i waga kazdego wpisu."""
+    COL_NO, COL_GIFT, COL_SPRITE, COL_WEIGHT, COL_CHANCE, COL_TEXT, COL_EDIT = range(7)
+
+    def __init__(self, feature, entries, on_change, owner=None):
+        super().__init__()
+        self.f = feature
+        self.on_change = on_change
+        self.owner = owner            # GiftsBox, gdy teksty da sie zmieniac (inaczej None)
+        self._loading = False
+        self.n = len(entries)
+        self.texts = [list(e["texts"]) for e in entries]
+        self.orig_texts = [list(e["texts"]) for e in entries]
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        self.table = QTableWidget(self.n, 7)
+        self.table.setHorizontalHeaderLabels(
+            ["#", "Dar – co się stanie", "Przedmiot (obrazek i dźwięk)", "Waga", "Szansa",
+             "Tekst w grze (polski)", ""])
+        self.table.verticalHeader().setVisible(False)
+        self.table.cellDoubleClicked.connect(self._cell_double_clicked)
+        hh = self.table.horizontalHeader()
+        hh.setSectionResizeMode(self.COL_TEXT, QHeaderView.Stretch)
+        for c in (self.COL_NO, self.COL_GIFT, self.COL_SPRITE, self.COL_WEIGHT, self.COL_CHANCE,
+                  self.COL_EDIT):
+            hh.setSectionResizeMode(c, QHeaderView.ResizeToContents)
+        self.gifts, self.sprites, self.weights = [], [], []
+        for i in range(self.n):
+            off = feature.entry_offset(i)
+            num = read_only_item(str(i + 1))
+            num.setToolTip(f"offsety w pliku – dar 0x{off:X}, waga 0x{off + 4:X}, "
+                           f"obrazek 0x{off + 8:X}, wskaźniki tekstów 0x{off + 12:X}")
+            self.table.setItem(i, self.COL_NO, num)
+            cb_gift = QComboBox()
+            for gid in sorted(cp.GIFT_EFFECTS):
+                cb_gift.addItem(cp.gift_label(gid), gid)
+            cb_gift.setMinimumWidth(260)
+            cb_gift.currentIndexChanged.connect(self._changed)
+            self.table.setCellWidget(i, self.COL_GIFT, cb_gift)
+            self.gifts.append(cb_gift)
+            cb_spr = QComboBox()
+            for sid in sorted(cp.ARTEFACT_NAMES):
+                cb_spr.addItem(cp.artefact_label(sid), sid)
+            cb_spr.setMinimumWidth(240)
+            cb_spr.setToolTip("Obrazek z temple.s32 pokazywany w okienku i jednocześnie numer "
+                              "dźwięku sfx\\artefakt\\N.wav (przy „bez obrazka” gra odtwarza "
+                              "dźwięk 7 i nie rysuje nic).")
+            cb_spr.currentIndexChanged.connect(self._changed)
+            self.table.setCellWidget(i, self.COL_SPRITE, cb_spr)
+            self.sprites.append(cb_spr)
+            sp = QSpinBox()
+            sp.setRange(0, cp.GiftTable.MAX_WEIGHT)
+            sp.valueChanged.connect(self._changed)
+            self.table.setCellWidget(i, self.COL_WEIGHT, sp)
+            self.weights.append(sp)
+            self.table.setItem(i, self.COL_CHANCE, read_only_item())
+            self.table.setItem(i, self.COL_TEXT, read_only_item())
+            btn = QPushButton("Zmień…")
+            btn.setToolTip("Zmienia tekst, który gra pokaże w okienku tego daru")
+            btn.setEnabled(owner is not None)
+            btn.clicked.connect(lambda _=False, row=i: self.edit_text(row))
+            self.table.setCellWidget(i, self.COL_EDIT, btn)
+        lay.addWidget(self.table)
+        self.summary = QLabel("")
+        self.summary.setWordWrap(True)
+        lay.addWidget(self.summary)
+        self.warn = QLabel("")
+        self.warn.setWordWrap(True)
+        self.warn.setStyleSheet("color: #c0392b;")
+        lay.addWidget(self.warn)
+
+    # --- dane
+    def load(self, entries):
+        self._loading = True
+        for i, e in enumerate(entries[:self.n]):
+            self.gifts[i].setCurrentIndex(self.gifts[i].findData(e["gift"]))
+            idx = self.sprites[i].findData(e["sprite"])
+            if idx < 0:                      # obrazek, ktorego nie ma na liscie - dopisz go
+                self.sprites[i].addItem(cp.artefact_label(e["sprite"]), e["sprite"])
+                idx = self.sprites[i].findData(e["sprite"])
+            self.sprites[i].setCurrentIndex(idx)
+            self.weights[i].setValue(e["weight"])
+            self.texts[i] = list(e["texts"])
+            self.orig_texts[i] = list(e["texts"])
+            self.show_text(i)
+        self._loading = False
+        self._update()
+
+    def show_text(self, i):
+        pl, en = self.texts[i][0], self.texts[i][1]
+        item = self.table.item(i, self.COL_TEXT)
+        item.setText(" ".join(pl.split())[:70])
+        # podpowiedzi Qt nie zawijaja zwyklego tekstu same - lamiemy go recznie
+        item.setToolTip("\n\n".join(textwrap.fill(" ".join(t.split()), 90)
+                                    for t in (pl, en) if t.strip()))
+
+    def edit_text(self, i):
+        if self.owner is not None:
+            self.owner.edit_text(self, i)
+
+    def _cell_double_clicked(self, row, col):
+        if col == self.COL_TEXT:
+            self.edit_text(row)
+
+    def value(self):
+        return [{"gift": self.gifts[i].currentData(),
+                 "sprite": self.sprites[i].currentData(),
+                 "weight": self.weights[i].value()} for i in range(self.n)]
+
+    def refresh_effects(self, amounts):
+        """Odswieza opisy darow po zmianie liczb w sekcji „Siła darów”."""
+        for cb in self.gifts:
+            for pos in range(cb.count()):
+                cb.setItemText(pos, cp.gift_label(cb.itemData(pos), amounts))
+
+    # --- liczenie szans i kontrola
+    def _update(self):
+        ws = [sp.value() for sp in self.weights]
+        total = sum(ws)
+        chances = cp.GiftTable.chances(ws)
+        for i, c in enumerate(chances):
+            self.table.item(i, self.COL_CHANCE).setText(f"{c} / {total} = {pct(c, total)}"
+                                                        if total else str(c))
+        self.summary.setText(
+            f"Suma wag: {total}. Gra losuje liczbę od 0 do {max(total - 1, 0)}, więc pierwszy wpis "
+            f"ma o jedną szansę więcej, niż wynika z jego wagi, a ostatni o jedną mniej.")
+        msgs, ok = [], True
+        if total <= 0:
+            msgs.append("Suma wag musi być większa od zera – przy zerze gra losuje z pustego "
+                        "zakresu i wynik jest nieprzewidywalny.")
+            ok = False
+        dead = [i + 1 for i, c in enumerate(chances) if c <= 0]
+        if dead:
+            msgs.append("Wpisy, których gra nigdy nie wylosuje: " + ", ".join(map(str, dead)) + ".")
+        if self.f.human and not self._has_reroll_gift(chances):
+            msgs.append("W misjach 2, 6, 12 i 16 gra losuje dla gracza tak długo, aż trafi na dar "
+                        "„nowy oddział” albo „brak efektu” – w tej tabeli żaden osiągalny wpis nie "
+                        "ma takiego daru, więc gra zawiesiłaby się w tych misjach.")
+            ok = False
+        self.warn.setText(" ".join(msgs))
+        return ok
+
+    def _has_reroll_gift(self, chances):
+        return any(self.gifts[i].currentData() in cp.GIFT_REROLL_OK and chances[i] > 0
+                   for i in range(self.n))
+
+    def valid(self):
+        return self._update()
+
+    def _changed(self, *_):
+        self._update()
+        if not self._loading:
+            self.on_change()
+
+
+class GiftsBox(QGroupBox):
+    """Cztery tabele darow w zagniezdzonych zakladkach."""
+
+    def __init__(self, exe, on_change):
+        super().__init__("Dary świątyń i miejsc kultu – co i jak często można wylosować")
+        self.boxes = {}
+        self.on_change = on_change
+        self.exe = exe
+        self.texts_ft = exe.features.get("gift_texts")
+        lay = QVBoxLayout(self)
+        lay.addWidget(note_label(cp.DESC_GIFTS))
+        lay.addWidget(note_label(
+            "Liczba wpisów jest stała – tabele leżą w pliku jedna za drugą, więc nie da się dopisać "
+            "nowej pozycji. Można jednak zmienić każdemu wpisowi dar (efekt), przedmiot, wagę "
+            "i tekst, a waga 0 praktycznie go wyłącza. Jednostki, które daje dar „nowy oddział”, "
+            "ustawia się w dwóch listach powyżej."))
+        lay.addWidget(note_label(cp.DESC_GIFT_TEXTS if self.texts_ft else
+                                 "Tekstów w tym pliku zmienić nie można: "
+                                 + exe.problems.get("gift_texts", "brak w tej wersji gry")
+                                 + ". Ostatnia kolumna pokazuje, co gra wypisze."))
+        self.tabs = QTabWidget()
+        for key in ("gifts_christian_human", "gifts_christian_ai",
+                    "gifts_pagan_human", "gifts_pagan_ai"):
+            ft = exe.features.get(key)
+            if not ft:
+                continue
+            box = GiftTableBox(ft, ft.read(exe.data), on_change,
+                               self if self.texts_ft else None)
+            self.tabs.addTab(box, ft.title)
+            self.boxes[key] = box
+        if self.boxes:
+            lay.addWidget(self.tabs)
+        else:
+            lay.addWidget(note_label("Niedostępne: " + "; ".join(
+                exe.problems.get(k, "brak w tej wersji gry") for k in
+                ("gifts_christian_human", "gifts_pagan_human"))))
+            self.setEnabled(False)
+        self.budget = QLabel("")
+        self.budget.setWordWrap(True)
+        self.budget.setVisible(bool(self.texts_ft))
+        lay.addWidget(self.budget)
+
+    # --- teksty (wspolna pula bajtow czterech tabel)
+    def texts(self, override=None):
+        """{klucz tabeli: [[polski, angielski, trzeci], ...]} - stan pol w programie."""
+        out = {}
+        for key, box in self.boxes.items():
+            rows = [list(row) for row in box.texts]
+            if override and override[0] is box:
+                rows[override[1]] = list(override[2]) + rows[override[1]][2:]
+            out[key] = rows
+        return out
+
+    def used_bytes(self, override=None):
+        return self.texts_ft.used(self.exe.data, self.texts(override))
+
+    def edit_text(self, box, i):
+        dlg = GiftTextDialog(
+            self, f"{box.f.title} – wpis {i + 1}: tekst daru",
+            box.texts[i][:2], box.orig_texts[i][:2],
+            box.sprites[i].currentData() != -1,
+            lambda texts: self.used_bytes((box, i, texts)), self.texts_ft.pool_size)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        new = dlg.texts()
+        if new == box.texts[i][:2]:
+            return
+        box.texts[i][:2] = new
+        box.show_text(i)
+        self._update_budget()
+        self.on_change()
+
+    def _update_budget(self):
+        if not self.texts_ft:
+            return True
+        used, pool = self.used_bytes(), self.texts_ft.pool_size
+        self.budget.setText(
+            f"Teksty darów zajmują {used} z {pool} bajtów wspólnego obszaru w pliku"
+            + (f" – trzeba skrócić je o {used - pool} B." if used > pool else
+               f" (wolne {pool - used} B)."))
+        self.budget.setStyleSheet("color: #c0392b;" if used > pool else "color: palette(mid);")
+        return used <= pool
+
+    def load(self, exe):
+        self.exe = exe
+        for key, box in self.boxes.items():
+            box.load(exe.get(key))
+        self._update_budget()
+
+    def store(self, exe):
+        for key, box in self.boxes.items():
+            exe.set(key, box.value())
+        if self.texts_ft:
+            exe.set("gift_texts", self.texts())
+
+    def refresh_effects(self, amounts):
+        for box in self.boxes.values():
+            box.refresh_effects(amounts)
+
+    def valid(self):
+        # bez skrotu logicznego - kazda zakladka ma odswiezyc swoje ostrzezenia
+        return all([box.valid() for box in self.boxes.values()] + [self._update_budget()])
+
+
+class GiftAmountsBox(QGroupBox):
+    """Sila darow - liczby wpisane w kod gry, wspolne dla wszystkich czterech tabel."""
+
+    def __init__(self, exe, on_change, on_amounts_changed):
+        super().__init__("Siła darów – ile dokładnie dają")
+        self.ft = exe.features.get("gift_amounts")
+        self.on_change = on_change
+        self.on_amounts_changed = on_amounts_changed
+        self._loading = False
+        self.spins = {}
+        lay = QVBoxLayout(self)
+        lay.addWidget(note_label(
+            "Te liczby gra ma wpisane wprost w kodzie, a nie w tabeli – są więc wspólne dla "
+            "świątyń, miejsc kultu i zakopanych skarbów, i obowiązują zarówno gracza, jak i "
+            "komputer. Dotyczą każdej jednostki armii, która weszła do świątyni (poza złotem, "
+            "chłopami i dowódcami, których gra pomija)."))
+        if not self.ft:
+            lay.addWidget(note_label("Niedostępne: " + exe.problems.get(
+                "gift_amounts", "w tej wersji gry nie są znane adresy tych liczb")))
+            self.setEnabled(False)
+            return
+        grid = QGridLayout()
+        for col, text in enumerate(("Dar", "Co robi", "Wartości")):
+            head = QLabel(text)
+            head.setStyleSheet("font-weight: bold;")
+            grid.addWidget(head, 0, col)
+        row = 1
+        for gid in sorted(cp.GIFT_EFFECTS):
+            amounts = self.ft.by_gift(gid)
+            name = cp.GIFT_EFFECTS[gid][0]
+            grid.addWidget(QLabel(f"{gid:02d}"), row, 0)
+            grid.addWidget(QLabel(name), row, 1)
+            if not amounts:
+                none = QLabel("—")
+                none.setToolTip("Ten dar nie ma w kodzie żadnej liczby do zmiany.")
+                grid.addWidget(none, row, 2)
+                row += 1
+                continue
+            cell = QWidget()
+            cl = QHBoxLayout(cell)
+            cl.setContentsMargins(0, 0, 0, 0)
+            for a in amounts:
+                cl.addWidget(QLabel(a.label + ":"))
+                sp = QSpinBox()
+                sp.setRange(a.lo, a.hi)
+                tip = f"offset 0x{a.instr.value_offset:X}, zakres {a.lo}–{a.hi}"
+                if a.note:
+                    tip = a.note + "\n" + tip
+                sp.setToolTip(tip)
+                sp.valueChanged.connect(self._changed)
+                cl.addWidget(sp)
+                self.spins[a.key] = sp
+            cl.addStretch(1)
+            grid.addWidget(cell, row, 2)
+            row += 1
+        grid.setColumnStretch(3, 1)
+        lay.addLayout(grid)
+        if self.ft.note:
+            lay.addWidget(note_label(self.ft.note))
+        self.warn = QLabel("")
+        self.warn.setWordWrap(True)
+        self.warn.setStyleSheet("color: #c0392b;")
+        lay.addWidget(self.warn)
+
+    def value(self):
+        return {k: sp.value() for k, sp in self.spins.items()}
+
+    def _validate(self):
+        if not self.ft:
+            return True
+        msgs, ok = [], True
+        lo, hi = self.spins.get("troops_min"), self.spins.get("troops_max")
+        if lo is not None and hi is not None and lo.value() > hi.value():
+            msgs.append("Dar „nowy oddział”: najmniejsza liczba jednostek jest większa od "
+                        "największej – gra losowałaby z odwróconego zakresu.")
+            ok = False
+        big = [k for k in ("tired2", "tired14")
+               if k in self.spins and self.spins[k].value() > cp.GiftAmounts.TIREDNESS_SAFE_ADD]
+        if big:
+            msgs.append(f"Dodanie więcej niż {cp.GiftAmounts.TIREDNESS_SAFE_ADD} zmęczenia przekręca "
+                        "bajt ze znakiem: jednostki, które są już zmęczone, zamiast kary dostaną "
+                        "zerowe zmęczenie (ten błąd ma też oryginalna KSIĘGA PLAG z +50).")
+        self.warn.setText(" ".join(msgs))
+        return ok
+
+    def valid(self):
+        return self._validate()
+
+    def _changed(self, *_):
+        self._validate()
+        if not self._loading:
+            self.on_change()
+            self.on_amounts_changed(self.value())
+
+    def load(self, exe):
+        if not self.ft:
+            return
+        self._loading = True
+        for key, v in exe.get("gift_amounts").items():
+            if key in self.spins:
+                self.spins[key].setValue(v)
+        self._loading = False
+        self._validate()
+
+    def store(self, exe):
+        if self.ft:
+            exe.set("gift_amounts", self.value())
+
+
 class RandomUnitsTab(QWidget):
     def __init__(self, exe, on_change):
         super().__init__()
         lay = QVBoxLayout(self)
         self.boxes = {}
-        for key in ("temple", "temple_mission", "port"):
+        for key in ("temple", "temple_mission"):
+            if key in exe.features:
+                box = DwordListBox(exe.features[key], on_change)
+                lay.addWidget(box)
+                self.boxes[key] = box
+        self.gifts = GiftsBox(exe, on_change)
+        self.amounts = GiftAmountsBox(exe, on_change, self.gifts.refresh_effects)
+        lay.addWidget(self.amounts)
+        lay.addWidget(self.gifts)
+        for key in ("port",):
             if key in exe.features:
                 box = DwordListBox(exe.features[key], on_change)
                 lay.addWidget(box)
@@ -124,10 +651,23 @@ class RandomUnitsTab(QWidget):
     def load(self, exe):
         for k, box in self.boxes.items():
             box.load(exe.get(k))
+        self.amounts.load(exe)
+        if "gift_amounts" in exe.features:
+            self.gifts.refresh_effects(exe.get("gift_amounts"))
+        self.gifts.load(exe)
+        for box in self.gifts.boxes.values():
+            fit_table_height(box.table)
 
     def store(self, exe):
         for k, box in self.boxes.items():
             exe.set(k, box.value())
+        self.amounts.store(exe)
+        self.gifts.store(exe)
+
+    def valid(self):
+        ok_amounts = self.amounts.valid()
+        ok_gifts = self.gifts.valid()
+        return ok_amounts and ok_gifts
 
 
 class ProductionTab(QWidget):
@@ -234,6 +774,134 @@ class ProductionTab(QWidget):
         if "tech" in exe.features:
             exe.set("tech", {uid: (self.spins[(uid, False)].value(), self.spins[(uid, True)].value())
                              for uid in range(cp.UNIT_COUNT)})
+
+
+def turns_word(n):
+    """tura / tury / tur - zeby suffiks w polu liczbowym nie brzmial jak '1 tur'."""
+    if n == 1:
+        return "tura"
+    if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14):
+        return "tury"
+    return "tur"
+
+
+class WallsTab(QWidget):
+    """Mury: koszt i czas rozbudowy (tabela murow)."""
+    EDITABLE = (1, 2)      # poziomy, do ktorych da sie rozbudowac mur (gra pokazuje je jako 2 i 3)
+
+    def __init__(self, exe, on_change):
+        super().__init__()
+        self.ft = exe.features.get("walls")
+        self.on_change = on_change
+        self._loading = False
+        self.base = self.ft.locate(exe.data) if self.ft else None
+        self.turns, self.costs = {}, {}
+        lay = QVBoxLayout(self)
+        lay.addWidget(note_label(
+            "Mur ma trzy poziomy – gra pokazuje je jako 1, 2 i 3 (zamek zaczyna na 1., twierdza na 2.). "
+            "„Rozbuduj mury” w zamku podnosi mur o jeden poziom: gra pobiera koszt ze skarbca tego zamku "
+            "i ustawia licznik tur. Licznik spada o 1 na początku każdej tury właściciela zamku, "
+            "a gdy dojdzie do zera, poziom muru rośnie. Podczas trwającej rozbudowy nie można "
+            "zlecić kolejnej, ale można ją zlecić już w tej turze, w której poprzednia się "
+            "skończyła. Oryginalnie czasy to 5 i 10 tur, a oba koszty to 1 sztuka złota "
+            "(wygląda to na błąd w danych gry – bajty 05 01 / 0A 01 wyglądają na zamierzone "
+            "16-bitowe 261 i 266, ale gra czyta z nich po jednym bajcie)."))
+        box = QGroupBox("Rozbudowa murów")
+        bl = QVBoxLayout(box)
+        grid = QGridLayout()
+        for col, text in enumerate(("Rozbudowa", "Wymaga technologii", "Czas", "Koszt")):
+            head = QLabel(text)
+            head.setStyleSheet("font-weight: bold;")
+            grid.addWidget(head, 0, col)
+        for row, lvl in enumerate(self.EDITABLE, start=1):
+            grid.addWidget(QLabel(f"do {lvl + 1}. poziomu"), row, 0)
+            tech = QLabel(str(cp.WallTable.TECH_NEEDED[lvl]))
+            tech.setToolTip("Building_CanUpgradeWall: poziom muru musi być mniejszy niż technologia zamku − 1")
+            grid.addWidget(tech, row, 1)
+            t = QSpinBox()
+            t.setRange(cp.WallTable.MIN_TURNS, cp.WallTable.MAX_TURNS)
+            t.setSuffix(" tur")
+            t.setToolTip("Licznik tur zamku. Minimum to 1 – przy 0 gra pobrałaby złoto, licznik nigdy by nie "
+                         "wystartował i mur nigdy by się nie podniósł."
+                         + (f"\noffset 0x{self.ft.turns_offset(self.base, lvl):X}" if self.base is not None else ""))
+            c = QSpinBox()
+            c.setRange(cp.WallTable.MIN_COST, cp.WallTable.MAX_COST)
+            c.setSuffix(" szt. złota")
+            c.setToolTip("Koszt to jeden bajt bez znaku, więc maksimum to 255 sztuk złota."
+                         + (f"\noffset 0x{self.ft.cost_offset(self.base, lvl):X}" if self.base is not None else ""))
+            for sp in (t, c):
+                sp.setMinimumWidth(130)
+                sp.valueChanged.connect(self._changed)
+            grid.addWidget(t, row, 2)
+            grid.addWidget(c, row, 3)
+            self.turns[lvl], self.costs[lvl] = t, c
+        grid.setColumnStretch(4, 1)
+        bl.addLayout(grid)
+        self.summary = QLabel("")
+        self.summary.setWordWrap(True)
+        bl.addWidget(self.summary)
+        self.strength = note_label("")
+        bl.addWidget(self.strength)
+        if self.ft:
+            where = f"Tabela murów w pliku: 0x{self.base:X}. " if self.base is not None else ""
+            bl.addWidget(note_label(
+                where + "Czas i koszt czyta tylko funkcja rozbudowy murów (0x379D4), a wywołuje ją zarówno "
+                "menu zamku, jak i komputerowy przeciwnik (reguła „rozbudowa_murow”), więc nowe wartości "
+                "obowiązują też jego. Komputer nie ma tu zniżki, jaką ma na licencje i budynki, i próbuje "
+                "rozbudowy, gdy tylko może – przy wysokiej cenie będzie po prostu czekał, aż uzbiera złoto. "
+                "Menu „Rozbuduj mury” nie pokazuje ceny, więc nigdzie w grze nie zostaje stara liczba: "
+                "kliknięcie bez dość złota po prostu nic nie robi (tak samo jak w oryginale). "
+                + (self.ft.note or "")))
+        else:
+            box.setEnabled(False)
+        lay.addWidget(box)
+        if not self.ft:
+            lay.addWidget(note_label("Niedostępne: " + exe.problems.get("walls", "brak w tej wersji gry")))
+        lay.addStretch(1)
+
+    def _update(self):
+        for lvl in self.EDITABLE:
+            sp = self.turns[lvl]
+            sp.setSuffix(" " + turns_word(sp.value()))
+        t = sum(self.turns[lvl].value() for lvl in self.EDITABLE)
+        g = sum(self.costs[lvl].value() for lvl in self.EDITABLE)
+        parts = ["Z 1. na 3. poziom muru: "
+                 + " + ".join(str(self.turns[lvl].value()) for lvl in self.EDITABLE)
+                 + f" = {t} {turns_word(t)} i "
+                 + " + ".join(str(self.costs[lvl].value()) for lvl in self.EDITABLE)
+                 + f" = {g} szt. złota (zamek potrzebuje do tego 3. poziomu technologicznego)."]
+        if any(self.costs[lvl].value() == 0 for lvl in self.EDITABLE):
+            parts.append("Koszt 0 oznacza rozbudowę za darmo.")
+        self.summary.setText(" ".join(parts))
+
+    def _changed(self, *_):
+        self._update()
+        if not self._loading:
+            self.on_change()
+
+    def load(self, exe):
+        if not self.ft:
+            return
+        self._loading = True
+        v = exe.get("walls")
+        for lvl in self.EDITABLE:
+            self.turns[lvl].setValue(v["turns"][lvl])
+            self.costs[lvl].setValue(v["cost"][lvl])
+        self.strength.setText(
+            "Wytrzymałość murów (mnożnik obrażeń zadawanych murom w bitwie, ×/256 – im mniej, "
+            "tym mocniejszy mur): "
+            + ", ".join(f"{lvl + 1}. poziom {s}" for lvl, s in enumerate(v["strength"]))
+            + ". Tego pola tabeli program nie zmienia.")
+        self._loading = False
+        self._update()
+
+    def store(self, exe):
+        if not self.ft:
+            return
+        exe.set("walls", {
+            "turns": [0] + [self.turns[lvl].value() for lvl in self.EDITABLE],
+            "cost": [0] + [self.costs[lvl].value() for lvl in self.EDITABLE],
+        })
 
 
 class ValuesTab(QWidget):
@@ -533,10 +1201,10 @@ class MainWindow(QMainWindow):
         self.dirty = False
         self.tabs.clear()
         self.pages = [RandomUnitsTab(exe, self._mark), ProductionTab(exe, self._mark),
-                      ValuesTab(exe, self._mark), CombatTab(exe, self._mark), FixesTab(exe, self._mark),
-                      CheatsTab(exe, self._mark)]
-        titles = ["Świątynia i port", "Kuźnia, warsztat, poziomy", "Punkty akcji", "Walka", "Poprawki",
-                  "Kody"]
+                      WallsTab(exe, self._mark), ValuesTab(exe, self._mark), CombatTab(exe, self._mark),
+                      FixesTab(exe, self._mark), CheatsTab(exe, self._mark)]
+        titles = ["Świątynia i port", "Kuźnia, warsztat, poziomy", "Mury", "Punkty akcji", "Walka",
+                  "Poprawki", "Kody"]
         for page, title in zip(self.pages, titles):
             page.load(exe)
             self.tabs.addTab(page if isinstance(page, ProductionTab) else scrolled(page), title)
@@ -563,16 +1231,35 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "Popraw dane", "Na jednej z zakładek są błędy (zaznaczone na czerwono).")
                 return False
         for page in self.pages:
-            page.store(self.exe)
+            try:
+                page.store(self.exe)
+            except ValueError as e:        # znalezisko odmawia zapisu takiej wartosci
+                self.exe.data = bytearray(self.exe.original)
+                QMessageBox.critical(self, "Nie można zapisać", str(e))
+                return False
         return True
 
     def _changes_text(self):
         ch = self.exe.changes()
         if not ch:
             return "Brak zmian względem pliku na dysku."
-        lines = [f"Zmienione bajty: {len(ch)}", ""]
-        lines += [f"0x{o:06X}: {a:02X} -> {b:02X}" for o, a, b in ch[:300]]
-        if len(ch) > 300:
+        # sasiadujace bajty w jedno miejsce - inaczej jedna zmiana tekstu daru (kilkanascie
+        # tysiecy bajtow) nadpisalaby wszystkie pozostale
+        runs = []
+        for o, a, b in ch:
+            if runs and runs[-1][0] + len(runs[-1][1]) == o:
+                runs[-1][1].append(a)
+                runs[-1][2].append(b)
+            else:
+                runs.append((o, [a], [b]))
+        lines = [f"Zmienione bajty: {len(ch)} w {len(runs)} miejscach", ""]
+        for o, old, new in runs[:300]:
+            if len(old) <= 8:
+                lines.append(f"0x{o:06X}: {bytes(old).hex(' ').upper()} -> "
+                             f"{bytes(new).hex(' ').upper()}")
+            else:
+                lines.append(f"0x{o:06X}–0x{o + len(old) - 1:06X}: {len(old)} bajtów")
+        if len(runs) > 300:
             lines.append("…")
         return "\n".join(lines)
 

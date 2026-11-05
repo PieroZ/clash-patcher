@@ -1,0 +1,83 @@
+# Builds clash-exe-config.exe out of clash_exe_config.py with build_exe.py.
+# The .exe is attached to every run as a downloadable artifact; pushing a
+# tag like v1.0 also attaches it to a GitHub release.
+name: Build exe
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-exe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build on Windows
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-build.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r requirements-build.txt
+
+      - name: Check that the sources import cleanly
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -c "import clash_exe_patches, clash_exe_config; print('import OK')"
+
+      - name: Build the .exe
+        run: python build_exe.py
+
+      - name: Upload the .exe as a build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: clash-exe-config
+          path: dist/clash-exe-config.exe
+          if-no-files-found: error
+
+  release:
+    name: Attach the .exe to the release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download the built .exe
+        uses: actions/download-artifact@v8
+        with:
+          name: clash-exe-config
+          path: dist
+
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/clash-exe-config.exe --clobber
+          else
+            gh release create "$TAG" dist/clash-exe-config.exe --title "$TAG" --generate-notes
+          fi
