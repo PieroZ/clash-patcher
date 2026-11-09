@@ -18,6 +18,9 @@ from PySide6.QtGui import QAction
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import clash_exe_patches as cp
+from version import __version__
+
+APP_NAME = "Clash Patcher"
 
 
 def unit_combo(current=None):
@@ -1168,7 +1171,8 @@ class MainWindow(QMainWindow):
         if path:
             self.load(path)
         else:
-            self.tabs.addTab(QLabel("  Otwórz plik CLASH.EXE (DOS, polska wersja) albo clash95.exe."), "Start")
+            self.tabs.addTab(QLabel(f"  {APP_NAME} {__version__}\n\n"
+                                    "  Otwórz plik CLASH.EXE (DOS, polska wersja) albo clash95.exe."), "Start")
 
     def _enable(self, on):
         for name in ("save", "save_as", "show_changes", "reload", "restore_backup"):
@@ -1176,7 +1180,7 @@ class MainWindow(QMainWindow):
 
     def _set_title(self):
         name = os.path.basename(self.exe.path) if self.exe else "brak pliku"
-        self.setWindowTitle(f"Konfigurator Clash – {name}{' *' if self.dirty else ''}")
+        self.setWindowTitle(f"{APP_NAME} {__version__} – {name}{' *' if self.dirty else ''}")
 
     def _mark(self, *_):
         if not self.dirty:
@@ -1210,7 +1214,7 @@ class MainWindow(QMainWindow):
             self.tabs.addTab(page if isinstance(page, ProductionTab) else scrolled(page), title)
         info = QPlainTextEdit()
         info.setReadOnly(True)
-        lines = [exe.profile["name"], exe.path, ""]
+        lines = [f"{APP_NAME} {__version__}", "", exe.profile["name"], exe.path, ""]
         for ft in exe.profile["features"]:
             state = "OK" if ft.key in exe.features else "WYŁĄCZONE – " + exe.problems[ft.key]
             lines.append(f"{ft.title}: {state}")
@@ -1334,7 +1338,12 @@ class MainWindow(QMainWindow):
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] in ("--version", "-V"):
+        print(f"{APP_NAME} {__version__}")
+        return
     app = QApplication(sys.argv)
+    app.setApplicationName(APP_NAME)
+    app.setApplicationVersion(__version__)
     win = MainWindow(sys.argv[1] if len(sys.argv) > 1 else None)
     win.show()
     sys.exit(app.exec())

@@ -1207,6 +1207,11 @@ def _cheats(start_offsets_lengths):
 
 
 # ---------------------------------------------------------------- profile wersji gry
+NOTE_SPLIT_ICON = (
+    "To samo minimum steruje kolorem krzyżyka na ikonce zaznaczonej jednostki na dolnym pasku "
+    "(czerwony = za mało PA, żeby ją odłączyć)."
+)
+
 DESC_NO_GROUND_ON_FLY = (
     'Blokuje exploit: dołączanie jednostek naziemnych do oddziału latającego, który stoi nad wodą, k'
     'raterem lub innym terenem niedostępnym dla piechoty. Przy łączeniu oddziałów i przy przenoszeni'
@@ -1309,8 +1314,10 @@ PROFILES = {
                       note="Tabela 0x1339D8 w pamięci gry. Zmieniane są tylko cztery bajty: "
                            "czas 0x15FDDE i 0x15FDE2, koszt 0x15FDDF i 0x15FDE3."),
             CostWithMinimum("ap_split", "Dzielenie oddziału / przenoszenie części jednostek",
-                            Instr(0x74DAA, "806808"), [Instr(0x74A46, "83F8"), Instr(0x74A9D, "83F8")],
-                            clamped=False),
+                            Instr(0x74DAA, "806808"),
+                            [Instr(0x74A46, "83F8"), Instr(0x74A9D, "83F8"),
+                             Instr(0x751F1, "83F8")],  # kolor krzyzyka na ikonce jednostki (dolny pasek)
+                            clamped=False, note=NOTE_SPLIT_ICON),
             CostWithMinimum("ap_join", "Dołączenie całego oddziału do innego",
                             Instr(0x7485D, "BA"), [Instr(0x7484F, "83F8")], clamped=False,
                             note="Tej samej funkcji gra używa przy budowaniu armii na starcie scenariusza, "
@@ -1355,8 +1362,10 @@ PROFILES = {
                            "wytrzymałości murów są w obu wersjach te same. Jeśli znajdzie więcej niż jedno "
                            "takie miejsce, ustawienie zostaje wyłączone."),
             CostWithMinimum("ap_split", "Dzielenie oddziału / przenoszenie części jednostek",
-                            Instr(0x225EF, "806808"), [Instr(0x22398, "83F8"), Instr(0x223D0, "83F8")],
-                            clamped=False),
+                            Instr(0x225EF, "806808"),
+                            [Instr(0x22398, "83F8"), Instr(0x223D0, "83F8"),
+                             Instr(0x22AC7, "83F8")],  # kolor krzyzyka na ikonce jednostki (dolny pasek)
+                            clamped=False, note=NOTE_SPLIT_ICON),
             CostWithMinimum("ap_join", "Dołączenie całego oddziału do innego",
                             Instr(0x22141, "BA"), [Instr(0x22124, "83F8")], clamped=True,
                             note="Tej samej funkcji gra używa przy budowaniu armii na starcie scenariusza, "

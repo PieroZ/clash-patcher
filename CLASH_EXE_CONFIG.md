@@ -33,7 +33,7 @@ Przy otwarciu każde znalezisko jest sprawdzane – jeśli bajty pod adresem nie
 | | Minimalny poziom: rekord typu jednostki + 0x4C / + 0x4B | 0x15E7D4 + ID×0x58 | 0x110768 + ID×0x58 |
 | Mury | Czas rozbudowy muru do 2. i 3. poziomu (bajty +2 wpisów 1 i 2 tabeli murów) | 0x15FDDE, 0x15FDE2 | szukane po bajtach |
 | | Koszt rozbudowy muru do 2. i 3. poziomu (bajty +3 tych samych wpisów) | 0x15FDDF, 0x15FDE3 | szukane po bajtach |
-| Punkty akcji | Koszt dzielenia (+ 2 warunki minimum) | 0x74DAD, 0x74A48, 0x74A9F | 0x225F2, 0x2239A, 0x223D2 |
+| Punkty akcji | Koszt dzielenia (+ 2 warunki minimum + kolor krzyżyka na ikonce jednostki) | 0x74DAD, 0x74A48, 0x74A9F, 0x751F3 | 0x225F2, 0x2239A, 0x223D2, 0x22AC9 |
 | | Koszt łączenia (+ warunek minimum) | 0x7485E, 0x74851 | 0x22142, 0x22126 |
 | Walka | Okopanie: oryginalnie obrona × 1,25, po zmianie obrona + N (kod `add …, N` + skok) | 0x5FE74, 0x5FF29 | 0x105DC |
 | Poprawki | Naziemne nie dołączają do latających nad niedostępnym terenem (nowy kod + 2–3 wstawki) | 0x2D54, 0x74847, 0x74A92, kod 0x13B820 | 0x22076, 0x2211B, 0x223C9, kod 0xE8C20 |
@@ -291,6 +291,8 @@ z jedną jednostką. Gra nie rozróżnia „jednostki” i „oddziału”, rozr
 
 - Minimum dotyczy najmniejszej liczby PA wśród **przenoszonych** jednostek; jednostki oddziału docelowego
   nie są sprawdzane ani karane.
+- Krzyżyk na ikonce zaznaczonej jednostki na dolnym pasku (DOS 0x3BDF1, Win 0x4236C7) ma osobne
+  porównanie z 4: PA ≥ 4 → szary, mniej → czerwony. Program ustawia je razem z minimum dzielenia.
 - Przejście części jednostek do sąsiedniego oddziału to dla gry rozdzielenie – kosztuje 0x74DAD,
   koszt łączenia 0x7485E nie jest wtedy naliczany.
 - Wszystkich jednostek oddziału nie da się przenieść przez „rozdzielenie” – wtedy działa łączenie całego oddziału.

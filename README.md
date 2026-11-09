@@ -35,6 +35,11 @@ Obsługiwane wersje (rozpoznawane po rozmiarze pliku):
   do latających stojących nad wodą / kraterem.
 - **Kody** – treść 11 kodów (cheatów) wbudowanych w grę.
 
+## Wersje
+
+Aktualny numer wersji jest w `version.py` (widać go też w tytule okna programu), lista zmian
+w [CHANGELOG.md](CHANGELOG.md). Gotowy plik `.exe` każdej wersji jest w zakładce *Releases* na GitHubie.
+
 ## Uruchomienie
 
 **Najprościej (Windows):** zainstaluj Pythona z https://www.python.org/downloads/ (w instalatorze zaznacz

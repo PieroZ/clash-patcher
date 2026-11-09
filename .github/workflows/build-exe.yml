@@ -45,6 +45,15 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: python -c "import clash_exe_patches, clash_exe_config; print('import OK')"
 
+      - name: Check that the tag matches version.py
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          V=$(python -c "from version import __version__; print(__version__)")
+          if [ "$GITHUB_REF_NAME" != "v$V" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match version.py ($V)"; exit 1
+          fi
+
       - name: Build the .exe
         run: python build_exe.py
 
