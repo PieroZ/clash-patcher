@@ -25,8 +25,8 @@ UNIT_COUNT = len(UNIT_NAMES)          # 0x00..0x1E - jednostki bojowe
 
 def unit_label(uid):
     if 0 <= uid < UNIT_COUNT:
-        return f"{uid:02X} – {UNIT_NAMES[uid]}"
-    return f"{uid:02X} – ?"
+        return f"{uid:02X}: {UNIT_NAMES[uid]}"
+    return f"{uid:02X}: ?"
 
 
 # ---------------------------------------------------------------- teksty gry (Mazovia)
@@ -80,7 +80,7 @@ def mazovia_encode(text):
 
 
 # ---------------------------------------------------------------- dary swiatyn
-# Numer daru = przypadek instrukcji wyboru w Temple_ProcessGift (0x5BCDB), 0..15.
+# Numer daru = przypadek instrukcji wyboru w kodzie wykonujacym dar (0x950DB), 0..15.
 # Opis liczy sie z aktualnych wartosci w kodzie, bo one sa edytowalne.
 def _knives(n):
     if n == 1:
@@ -123,7 +123,7 @@ GIFT_EFFECTS = {
 }
 GIFT_COUNT = len(GIFT_EFFECTS)
 
-# Dary, ktore gra przyjmuje w misjach 2, 6, 12 i 16 dla gracza: Temple_UnitGetInto losuje tam
+# Dary, ktore gra przyjmuje w misjach 2, 6, 12 i 16 dla gracza: kod wejscia do swiatyni (0x95535) losuje tam
 # w petli, dopoki nie trafi na dar 0 albo 15. Tabela gracza bez takiego osiagalnego wpisu
 # zawiesilaby gre w tych misjach.
 GIFT_REROLL_OK = (0, 15)
@@ -138,13 +138,13 @@ def gift_label(gid, amounts=None):
             desc = ""
     else:
         desc = ""
-    return f"{gid:02d} – {name}" + (f" ({desc})" if desc else "")
+    return f"{gid:02d}: {name}" + (f" ({desc})" if desc else "")
 
 
 # Obrazek z temple.s32 (jednoczesnie numer dzwieku sfx\artefakt\N.wav, przy -1 gra bierze 7).
-# Pominiete 22 i 23: nie maja dzwieku, a 23 to tlo okna daru (S32_GetHeight(set, 0x17)).
+# Pominiete 22 i 23: nie maja dzwieku, a 23 to tlo okna daru (wysokosc tla okna daru).
 ARTEFACT_NAMES = {
-    -1: "(bez obrazka – szczera modlitwa)",
+    -1: "(bez obrazka, czyli szczera modlitwa)",
     0: "(grom z jasnego nieba / gniew bogów)",
     1: "(nowy oddział)",
     2: "pierścień zawinięty w chustę",
@@ -172,7 +172,7 @@ ARTEFACT_NAMES = {
 
 
 def artefact_label(sid):
-    return f"{sid:>2} – {ARTEFACT_NAMES.get(sid, '?')}"
+    return f"{sid:>2}: {ARTEFACT_NAMES.get(sid, '?')}"
 
 
 # ---------------------------------------------------------------- okienko daru
@@ -181,7 +181,7 @@ def artefact_label(sid):
 # (kazda klatka 58x39 px) w (294, 285), czyli x 294..351 i y 285..323,
 # i tekst czcionka 0x11 (gfx\BUD_INFO.SFN, odstep 1 px za znakiem, wiersz co 20 px) miedzy
 # x = 0x46 i x = 0x239, od y = 0xD2, z wyrownaniem 6 - zawijanie po slowach, kazdy wiersz
-# wysrodkowany (Text_DrawAligned 0x208C7).
+# wysrodkowany (kod rysujacy tekst, 0x59CC7).
 GIFT_TEXT_WIDTH = 0x239 - 0x46        # 499 px - tyle miesci sie w wierszu
 GIFT_FONT_SPACING = 1
 GIFT_LINES_CLEAN = 4                  # tyle wierszy miesci sie nad obrazkiem daru (jak w oryginale)
@@ -217,7 +217,7 @@ def gift_glyph_width(b):
 
 
 def gift_text_width(raw):
-    """Szerokosc tekstu w pikselach - jak Text_Width (0x206D0): znaki nowego wiersza pomijane,
+    """Szerokosc tekstu w pikselach, tak jak liczy to gra (0x59AD0): znaki nowego wiersza pomijane,
     za kazdym pozostalym jeden piksel odstepu, wynik obcinany do 16 bitow."""
     w = 0
     for b in raw:
@@ -227,7 +227,7 @@ def gift_text_width(raw):
 
 
 def gift_find_wrap(raw):
-    """Text_FindWrap (0x20752): indeks znaku nowego wiersza, albo - gdy tekst przekroczy
+    """Zawijanie wiersza, tak jak w grze (0x59B52): indeks znaku nowego wiersza, albo gdy tekst przekroczy
     szerokosc wiersza - indeks ostatniej spacji przed przekroczeniem (0, gdy spacji nie bylo),
     albo -1 na koncu tekstu."""
     acc, last = 0, 0
@@ -243,11 +243,11 @@ def gift_find_wrap(raw):
 
 
 def gift_wrap(raw):
-    """Wiersze, na jakie gra podzieli tekst daru - jak Text_DrawAligned (0x208C7) dla
+    """Wiersze, na jakie gra podzieli tekst daru, tak jak kod rysujacy tekst (0x59CC7) dla
     wyrownania 6, oraz czy przy tym gubi znaki.
 
     Zwraca (wiersze, gubi_znaki). Gra nie dzieli slow: gdy w wierszu nie ma ani jednej spacji,
-    Text_FindWrap zwraca 0, wiec gra wypisuje pusty wiersz i wyrzuca pierwszy znak reszty
+    zawijanie zwraca 0, wiec gra wypisuje pusty wiersz i wyrzuca pierwszy znak reszty
     (`rest = rest[p+1:]`) - i tak az slowo sie zmiesci."""
     lines, rest, lost = [], bytes(raw), False
     while gift_text_width(rest) > GIFT_TEXT_WIDTH or 0x0A in rest:
@@ -280,7 +280,7 @@ def gift_text_problems(text, with_sprite=True):
                       + " ".join(mazovia_decode(bytes([b])) for b in no_glyph) + ".")
     lines, lost = gift_wrap(raw)
     if not raw.strip():
-        warnings.append("Tekst jest pusty – gra pokaże okienko z samym obrazkiem.")
+        warnings.append("Tekst jest pusty, więc gra pokaże okienko z samym obrazkiem.")
     if lost:
         warnings.append("Jedno ze słów nie mieści się w wierszu. Gra nie dzieli słów: "
                         "wypisuje pusty wiersz i gubi po jednym znaku, aż słowo się zmieści.")
@@ -356,8 +356,8 @@ class UnitDwordList:
     zapisana w kodzie jako 'mov edx, N-1'."""
     kind = "dword_list"
 
-    def __init__(self, key, title, offset, size, count_instr, note="", expected=None):
-        self.key, self.title, self.note = key, title, note
+    def __init__(self, key, title, offset, size, count_instr, note="", expected=None, details=""):
+        self.key, self.title, self.note, self.details = key, title, note, details
         self.offset, self.size, self.count_instr = offset, size, count_instr
         self.expected = expected   # oryginalne wartosci (do kontroli i przywracania)
 
@@ -452,8 +452,8 @@ class CostWithMinimum:
     wiec PA mniejsze od kosztu przekreca sie na ok. 250."""
     kind = "cost_min"
 
-    def __init__(self, key, title, cost, minimums, clamped, lo=0, hi=100, note=""):
-        self.key, self.title, self.note = key, title, note
+    def __init__(self, key, title, cost, minimums, clamped, lo=0, hi=100, note="", details=""):
+        self.key, self.title, self.note, self.details = key, title, note, details
         self.cost, self.minimums, self.clamped = cost, minimums, clamped
         self.lo, self.hi = lo, hi
 
@@ -570,7 +570,7 @@ class LeFixups:
     Zmiana samych bajtow w danych nic by wiec nie dala - loader nadpisalby je z powrotem.
     Dlatego program zmienia oba miejsca.
 
-    Format (re/docs/02-executable-format.md): naglowek LE lezy pod offsetem z dworda 0x3C pliku,
+    Format naglowka LE: naglowek lezy pod offsetem z dworda 0x3C pliku,
     strony plikowe od pola 0x80, tablica relokacji stron od 0x68 (liczba_stron+1 dwordow,
     offsety w tablicy wpisow od 0x6C). Wpis:
         u8  typ         (dolne 4 bity; 0x20 = dalej lista zrodel)
@@ -730,8 +730,8 @@ class GiftTable:
     wiec liczby wpisow nie da sie zmienic bez przenoszenia tabel - edytowalne sa numer daru,
     waga i obrazek kazdego istniejacego wpisu.
 
-    Tabele wybiera Temple_UnitGetInto (0x5C135) po religii gracza i po tym, czy jest czlowiekiem.
-    Losowanie: Temple_Random (0x5BC2C) sumuje wagi (S), bierze r = Random(0, S-1) i wybiera
+    Tabele wybiera kod wejscia do swiatyni (0x95535) po religii gracza i po tym, czy jest czlowiekiem.
+    Losowanie (0x9502C) sumuje wagi (S), bierze r = Random(0, S-1) i wybiera
     pierwszy wpis, dla ktorego suma wag do niego wlacznie jest >= r. Dlatego r = 0 zawsze trafia
     w pierwszy wpis (ma o jedna szanse wiecej, niz wynika z wagi), a ostatni wpis traci jedna
     szanse - metoda `chances` liczy to dokladnie tak samo jak gra.
@@ -814,7 +814,7 @@ class GiftTable:
 
     @staticmethod
     def chances(weights):
-        """Ile z S losowan trafia w kazdy wpis - dokladnie jak w Temple_Random.
+        """Ile z S losowan trafia w kazdy wpis - dokladnie jak w kodzie gry (0x9502C).
 
         Wpis i jest wybrany dla r = 0 (zawsze wpis 0) oraz dla
         suma(0..i-1) < r <= suma(0..i), przy r z zakresu 0..S-1."""
@@ -963,7 +963,7 @@ class GiftTexts:
 
 
 class GiftAmount:
-    """Jedna liczba wpisana wprost w kod obslugi darow (Temple_ProcessGift / Gift_NewTroops)."""
+    """Jedna liczba wpisana wprost w kod obslugi darow (0x950DB i 0x94AFF)."""
 
     def __init__(self, key, gift, label, instr, lo, hi, unit="", note=""):
         self.key, self.gift, self.label = key, gift, label
@@ -974,17 +974,20 @@ class GiftAmount:
 class GiftAmounts:
     """Sila darow: liczby, ktore gra ma wpisane w kodzie.
 
-    Gra nie trzyma ich w zadnej tabeli - sa to operandy instrukcji w Temple_ProcessGift
-    (0x5BCDB, instrukcja wyboru z 16 przypadkami) i w Gift_NewTroops (0x5B6FF, Random(1,5)).
+    Gra nie trzyma ich w zadnej tabeli - sa to operandy instrukcji w kodzie
+    wykonujacym dar (0x950DB, instrukcja wyboru z 16 przypadkami) i w kodzie tworzacym nowy
+    oddzial (0x94AFF, losowanie 1-5 jednostek).
     Te same liczby obowiazuja gracza i komputer, bo oba przechodza przez te funkcje; dotycza tez
     zakopanych skarbow, ktore korzystaja z tych samych numerow darow."""
     kind = "gift_amounts"
-    # SubUnit_AddTiredness (0x2881D) dodaje do bajtu ze znakiem i dopiero potem przycina do 0..100,
-    # wiec dodanie wiecej niz 27 przekreca bajt jednostkom o duzym zmeczeniu i zeruje im zmeczenie.
+    # Kod dodajacy zmeczenie (0x61C1D jedna jednostka, 0x61CAF caly oddzial) dodaje do bajtu ze
+    # znakiem i dopiero potem przycina do 0..100, wiec dodanie wiecej niz 27 przekreca bajt
+    # jednostkom o duzym zmeczeniu i zeruje im zmeczenie. Naprawia to CodePatch "tiredness_add",
+    # dlatego gdy jest wgrany, program nie ostrzega przy wiekszych wartosciach.
     TIREDNESS_SAFE_ADD = 27
 
-    def __init__(self, key, title, amounts, note=""):
-        self.key, self.title, self.note = key, title, note
+    def __init__(self, key, title, amounts, note="", details=""):
+        self.key, self.title, self.note, self.details = key, title, note, details
         self.amounts = amounts
 
     def by_gift(self, gift):
@@ -1016,7 +1019,7 @@ class WallTable:
     """Tabela murow (0x1339D8 w pamiesci gry) - 3 wpisy po 4 bajty:
     {u16 wytrzymalosc x256, u8 tury rozbudowy, u8 koszt rozbudowy}.
 
-    Building_UpgradeWall (0x379D4) przy rozbudowie z poziomu L czyta wpis L+1, a poziom muru
+    Kod rozbudowy murow (0x70DD4) przy rozbudowie z poziomu L czyta wpis L+1, a poziom muru
     jest zawsze < 2, wiec gra czyta tylko tury i koszt wpisow 1 i 2 (bajty +0x06/+0x07 i
     +0x0A/+0x0B tabeli). Tury i koszt wpisu 0 nie sa czytane nigdy - nie da sie "rozbudowac
     do poziomu 0". Poza ta jedna funkcja zadne inne miejsce w kodzie nie czyta tych bajtow,
@@ -1024,9 +1027,9 @@ class WallTable:
     ktory trzeba by zmieniac razem z liczbami.
 
     Koszt jest odczytywany jako bajt bez znaku i porownywany ze skarbcem zamku rowniez bez
-    znaku, wiec caly zakres 0-255 dziala poprawnie. Licznik tur (budynek +0x1AD) Building_WallsTick
-    (0x36519) zmniejsza o 1 na poczatku kazdej tury i podnosi poziom muru, gdy dojdzie do zera -
-    dlatego 0 tur nie ma sensu (zloto pobrane, licznik nigdy nie wystartuje).
+    znaku, wiec caly zakres 0-255 dziala poprawnie. Kod poczatku tury (0x6F919) zmniejsza licznik
+    tur (budynek +0x1AD) o 1 na poczatku kazdej tury wlasciciela i podnosi poziom muru, gdy ten
+    dojdzie do zera - dlatego 0 tur nie ma sensu (zloto pobrane, licznik nigdy nie wystartuje).
 
     Pole wytrzymalosci (427, 341, 256 - mnoznik obrazen zadawanych murom w bitwie) nie jest
     zmieniane; sluzy za znacznik rozpoznawczy tabeli."""
@@ -1040,11 +1043,11 @@ class WallTable:
     SIG_TAIL = bytes.fromhex("0001")              # wytrzymalosc wpisu 2
     MIN_TURNS, MAX_TURNS = 1, 255
     MIN_COST, MAX_COST = 0, 255
-    # wymagany poziom technologiczny zamku (Building_CanUpgradeWall: poziom muru < technologia - 1)
+    # wymagany poziom technologiczny zamku (warunek rozbudowy: poziom muru < technologia - 1)
     TECH_NEEDED = {1: 2, 2: 3}
 
-    def __init__(self, key, title, offset=None, note=""):
-        self.key, self.title, self.note = key, title, note
+    def __init__(self, key, title, offset=None, note="", details=""):
+        self.key, self.title, self.note, self.details = key, title, note, details
         self.offset = offset       # None = szukaj tabeli po bajtach rozpoznawczych
 
     @property
@@ -1170,8 +1173,9 @@ class CodePatch:
     Kazde miejsce musi miec albo oryginalne, albo nowe bajty - wszystkie w tym samym stanie."""
     kind = "codepatch"
 
-    def __init__(self, key, title, sites, description="", note=""):
+    def __init__(self, key, title, sites, description="", note="", details=""):
         self.key, self.title, self.description, self.note = key, title, description, note
+        self.details = details
         self.sites = []
         for off, orig, new in sites:
             new = bytes.fromhex(new)
@@ -1216,10 +1220,140 @@ DESC_NO_GROUND_ON_FLY = (
     'Blokuje exploit: dołączanie jednostek naziemnych do oddziału latającego, który stoi nad wodą, k'
     'raterem lub innym terenem niedostępnym dla piechoty. Przy łączeniu oddziałów i przy przenoszeni'
     'u części jednostek do sąsiedniego oddziału gra sprawdza teraz, czy dołączane jednostki mogłyby '
-    'wejść na pole docelowego oddziału (tak samo jak przy zwykłym ruchu). Jeśli nie – akcja jest odr'
-    'zucana jak przy braku punktów akcji. Łączenie przy rozstawianiu armii na starcie scenariusza ni'
+    'wejść na pole docelowego oddziału (tak samo jak przy zwykłym ruchu). Jeśli nie, akcja jest odr'
+    'zucana tak jak przy braku punktów akcji. Łączenie przy rozstawianiu armii na starcie scenariusza ni'
     'e jest sprawdzane.'
 )
+
+TITLE_TIREDNESS_ADD = "Zmęczenie zatrzymuje się na 100, a nie przekręca na zero"
+
+DESC_TIREDNESS_ADD = (
+    'Poprawia błąd: gra dodaje zmęczenie w bajcie ze znakiem i dopiero wynik przycina do 0–100, '
+    f'więc dodanie więcej niż {GiftAmounts.TIREDNESS_SAFE_ADD} przekręca bajt jednostkom, które są '
+    'już zmęczone, i zamiast kary daje im zerowe zmęczenie. Trafia w to oryginalna KSIĘGA PLAG '
+    '(dar 14, +50 zmęczenia): oddział o zmęczeniu 78 lub większym dostaje po niej pełny wypoczynek '
+    'zamiast klątwy. Po włączeniu poprawki gra liczy sumę na liczbach 32-bitowych i dopiero ją '
+    'przycina, więc zmęczenie dochodzi najwyżej do 100 i nie spada. Poza tym jednym przypadkiem '
+    'nic się nie zmienia: każda wartość, która i tak nie przekręcała bajtu, daje dokładnie ten sam '
+    'wynik co w oryginale. Poprawka obejmuje oba miejsca kodu, które dodają zmęczenie, więc działa '
+    'na dary świątyń, miejsc kultu i zakopanych skarbów, a także na zmęczenie z walki, z początku '
+    'tury i z odpoczynku oddziału w zamku.'
+)
+
+HOW_TIREDNESS_ADD = (
+    '<p>Zmęczenie leży w rekordzie jednostki pod <code>+0x0A</code> jako bajt ze znakiem i w całej '
+    'grze mieści się w 0–100. Dodają je dwa miejsca w kodzie o takiej samej treści: kod dodający '
+    'zmęczenie jednej jednostce (funkcja od <code>0x61C1D</code>, wskaźnik jednostki trzyma '
+    'w <code>[ebp-0x0C]</code>) i kod robiący to samo po kolei każdej jednostce oddziału (funkcja '
+    'od <code>0x61CAF</code>, wskaźnik w <code>[ebp-0x14]</code>). Zmieniany fragment ma w obu '
+    '46 bajtów; w pierwszym leży pod <code>0x61C7A</code> i wygląda tak:</p>'
+    '<pre>'
+    '8A 45 F8       mov   al, [ebp-0x08]        ; liczba do dodania\n'
+    '8B 55 F4       mov   edx, [ebp-0x0C]\n'
+    '00 42 0A       add   [edx+0x0A], al        ; tu przekręca się bajt\n'
+    '8B 55 F4       mov   edx, [ebp-0x0C]\n'
+    '0F BE 52 0A    movsx edx, byte [edx+0x0A]\n'
+    '85 D2          test  edx, edx\n'
+    '7D 07          jge   0x61C95\n'
+    '8B 45 F4       mov   eax, [ebp-0x0C]\n'
+    'C6 40 0A 00    mov   byte [eax+0x0A], 0    ; poniżej zera -&gt; 0\n'
+    '8B 45 F4       mov   eax, [ebp-0x0C]\n'
+    '0F BE 40 0A    movsx eax, byte [eax+0x0A]\n'
+    '83 F8 64       cmp   eax, 0x64\n'
+    '7E 07          jle   0x61CA8\n'
+    '8B 45 F4       mov   eax, [ebp-0x0C]\n'
+    'C6 40 0A 64    mov   byte [eax+0x0A], 0x64 ; powyżej 100 -&gt; 100'
+    '</pre>'
+    '<p>Suma wychodzi z <code>add</code> jako bajt ze znakiem, więc powyżej 127 jest ujemna '
+    'i pierwsze przycięcie zapisuje 0. Poprawka wstawia w te 46 bajtów kod, który dodaje '
+    'w 32 bitach i przycina sumę, zanim zapisze bajt:</p>'
+    '<pre>'
+    '8B 45 F8       mov   eax, [ebp-0x08]       ; liczba do dodania, całym dwordem\n'
+    '8B 55 F4       mov   edx, [ebp-0x0C]\n'
+    '0F BE 52 0A    movsx edx, byte [edx+0x0A]  ; zmęczenie 0..100\n'
+    '01 D0          add   eax, edx              ; suma w 32 bitach, bez przekręcania\n'
+    '85 C0          test  eax, eax\n'
+    '7D 02          jge   0x61C8C\n'
+    '31 C0          xor   eax, eax              ; poniżej zera -&gt; 0\n'
+    '83 F8 64       cmp   eax, 0x64\n'
+    '7E 02          jle   0x61C93\n'
+    'B0 64          mov   al, 0x64              ; powyżej 100 -&gt; 100\n'
+    '8B 55 F4       mov   edx, [ebp-0x0C]\n'
+    '88 42 0A       mov   [edx+0x0A], al        ; dopiero teraz zapis\n'
+    '90 (×15)       nop                         ; do 46 bajtów'
+    '</pre>'
+    '<p>Liczba jest brana całym dwordem, bo w tym samym slocie sprawdza ją instrukcja '
+    '<code>83 7D F8 00</code> (<code>cmp dword [ebp-0x08], 0</code>) z początku funkcji dla '
+    'oddziału, a więc wołający podają ją z rozszerzonym znakiem.</p>'
+    '<p>W drugim miejscu (fragment pod <code>0x61D5A</code>) te same instrukcje adresują jednostkę '
+    'przez <code>[ebp-0x14]</code>, więc bajt <code>F4</code> w operandach jest tam bajtem '
+    '<code>EC</code>; poza tym i poza adresami skoków nic się nie różni.</p>'
+    '<p>Żadnych adresów w pliku nie trzeba przy tym poprawiać. Jedyny skok z zewnątrz, '
+    '<code>EB 2E</code> pod <code>0x61C78</code> (i <code>0x61D58</code>), omija cały fragment '
+    'i celuje w pierwszy bajt za nim; do środka fragmentu nie skacze nic poza nim samym; tablica '
+    'relokacji pliku nie ma w tym zakresie ani jednego wpisu, bo wszystko jest adresowane przez '
+    '<code>ebp</code>. Nowy kod zmienia tylko <code>eax</code> i <code>edx</code>, dokładnie jak '
+    'oryginalny, więc <code>ecx</code>, <code>esi</code>, <code>edi</code> i <code>ebp</code> '
+    'zostają nietknięte.</p>'
+)
+
+# Bajty poprawki dla obu miejsc kodu dodajacych zmeczenie. Zmieniany fragment ma 46 bajtow
+# i w obu miejscach jest taki sam; rozni go tylko bajt operandu ze slotem ramki, w ktorym
+# funkcja trzyma wskaznik na jednostke, wiec {s} w zapisie hex nizej to wlasnie ten bajt.
+# Skoki sa wzgledne i nie wychodza poza fragment, a dane adresowane przez ebp, wiec poza tym
+# jednym bajtem kod nie zalezy od offsetu w pliku i jedno zrodlo wystarczy na oba miejsca.
+# Listing obu wersji kodu z komentarzami jest w HOW_TIREDNESS_ADD.
+_TIREDNESS_SITES = {
+    0x61C7A: 0x0C,   # SubUnit_AddTiredness (kod 0x2881D, plik 0x61C1D): wskaznik w [ebp-0x0C]
+    0x61D5A: 0x14,   # Unit_AddTiredness    (kod 0x288AF, plik 0x61CAF): wskaznik w [ebp-0x14]
+}
+_TIREDNESS_FRAGMENT = 46   # dlugosc fragmentu; nowy kod jest krotszy, reszta to nop-y
+
+# Oryginal: dodanie w bajcie ze znakiem (tu przekreca sie bajt), przyciecie dopiero po zapisie.
+_TIREDNESS_ORIG = (
+    "8a45f8 8b55{s} 00420a"           # mov al,[ebp-8]; mov edx,[ebp-slot]; add [edx+0x0A],al
+    " 8b55{s} 0fbe520a 85d2 7d07"     # mov edx,[ebp-slot]; movsx edx,[edx+0x0A]; test; jge +7
+    " 8b45{s} c6400a00"               # mov eax,[ebp-slot]; mov [eax+0x0A],0     (ponizej zera)
+    " 8b45{s} 0fbe400a 83f864 7e07"   # mov eax,[ebp-slot]; movsx eax,..; cmp eax,100; jle +7
+    " 8b45{s} c6400a64"               # mov eax,[ebp-slot]; mov [eax+0x0A],100   (powyzej 100)
+)
+
+# Poprawka: suma liczona w 32 bitach, przyciecie przed zapisem bajtu. Zrodlo asemblerowe
+# (keystone, KS_ARCH_X86 / KS_MODE_32; {slot} to 0x0C albo 0x14):
+#      mov   eax, dword ptr [ebp - 8]       ; delta calym dwordem - tak czyta ja sam kod gry
+#      mov   edx, dword ptr [ebp - {slot}]
+#      movsx edx, byte ptr [edx + 0xa]      ; zmeczenie 0..100
+#      add   eax, edx                       ; suma bez przekrecania bajtu
+#      test  eax, eax
+#      jge   HI
+#      xor   eax, eax                       ; ponizej zera -> 0
+# HI:  cmp   eax, 0x64
+#      jle   PUT
+#      mov   al, 0x64                       ; powyzej 100 -> 100
+# PUT: mov   edx, dword ptr [ebp - {slot}]
+#      mov   byte ptr [edx + 0xa], al       ; dopiero teraz zapis
+_TIREDNESS_NEW = (
+    "8b45f8 8b55{s} 0fbe520a 01d0"    # mov eax,[ebp-8]; mov edx,[ebp-slot]; movsx; add eax,edx
+    " 85c0 7d02 31c0"                 # test eax,eax; jge +2; xor eax,eax
+    " 83f864 7e02 b064"               # cmp eax,100; jle +2; mov al,100
+    " 8b55{s} 88420a"                 # mov edx,[ebp-slot]; mov [edx+0x0A],al
+)
+
+
+def _tiredness_code(pattern, slot, pad=False):
+    """Bajty fragmentu dla podanego slotu ramki; krotszy kod jest dopelniony nop-ami."""
+    code = bytes.fromhex(pattern.format(s=f"{-slot & 0xFF:02x}"))
+    assert len(code) <= _TIREDNESS_FRAGMENT, len(code)
+    assert pad or len(code) == _TIREDNESS_FRAGMENT, len(code)
+    return (code + b"\x90" * (_TIREDNESS_FRAGMENT - len(code))).hex()
+
+
+def _tiredness_sites():
+    """Lista (offset, oryginalne bajty, nowe bajty) dla CodePatch "tiredness_add"."""
+    return [(off, _tiredness_code(_TIREDNESS_ORIG, slot),
+             _tiredness_code(_TIREDNESS_NEW, slot, pad=True))
+            for off, slot in _TIREDNESS_SITES.items()]
+
 
 # Teksty darow leza w pliku pod "wskaznik + DOS_TEXT_DELTA" (loader DOS/4GW dolicza baze).
 DOS_TEXT_DELTA = 0x13C400
@@ -1231,14 +1365,329 @@ DOS_GIFT_POOL = (0x142C7A, 0x146606)
 
 DESC_GIFTS = (
     'Co i z jakim prawdopodobieństwem można dostać w świątyni (religia chrześcijańska) i w miejsc'
-    'u kultu (religia pogańska). Gra ma cztery osobne tabele – dla każdej religii inną dla gracz'
-    'a i inną dla komputera – i wybiera je po religii właściciela armii, która weszła do świątyni.'
+    'u kultu (religia pogańska). Gra ma cztery osobne tabele: dla każdej religii inną dla gracz'
+    'a i inną dla komputera. Wybiera je po religii właściciela armii, która weszła do świątyni.'
 )
+
+TITLE_TEMPLE_MISSION = 'Świątynia: wariant z misji 3 i 7 obu kampanii'
+
+NOTE_TEMPLE_MISSION = (
+    'Używany zamiast zwykłej listy w misjach 3 i 7 obu kampanii, dlatego dar „nowy oddział” '
+    'daje w nich ludzi, a w pozostałych misjach i w grze poza kampanią potwory.'
+)
+
+# Misje, w ktorych kod tworzacy nowy oddzial bierze liste ludzi zamiast listy potworow. Kolumny: wartosc
+# pola gry 0x222F1 (numer misji kampanii liczony od zera), kampania, numer pokazywany graczowi
+# (numer % 10 + 1), plik mapy, cel misji z g_missionObjectives (0x137F20 w pamieci gry).
+TEMPLE_MISSION_ROWS = (
+    (2, "chrześcijańska", 3, "k_mapa3l.map", "Zdobyć zamek przeciwnika"),
+    (6, "chrześcijańska", 7, "k_mapa7z.map", "Odbić królową"),
+    (12, "pogańska", 3, "p_mapa3z.map", "Zdobyć zamek przeciwnika"),
+    (16, "pogańska", 7, "p_mapa7j.map",
+     "Zdobyć najbardziej zaawansowany technologicznie zamek władcy Kalev"),
+)
+
+# Cztery porownania pola 0x222F1 w kodzie tworzacym nowy oddzial (0x94AFF) - offsety w pliku wersji DOS (odczytane
+# z CLASH.EXE). W wersji Windows nie byly sprawdzane, wiec tam ta sekcja sie nie pokazuje.
+TEMPLE_MISSION_CMP_DOS = ((0x94BD4, 2), (0x94BE4, 6), (0x94BF4, 12), (0x94C04, 16))
+
+# Zrodlo opisow misji i znaczenia pola 0x222F1 - rozpracowany kod gry obok tego projektu.
+SRC_MISSIONS = (
+    "Cztery numery misji odczytane wprost z pliku gry, z porównań wymienionych wyżej. "
+    "Nazwy map leżą w pliku jako zwykły tekst, pod <code>0x14DE11</code>, <code>0x14DF03</code>, "
+    "<code>0x14E0D2</code> i <code>0x14E1B7</code>. Cele misji są takie, jakie gra pokazuje "
+    "w okienku „Misja N” na początku każdej z nich."
+)
+
+
+# ------------------------------------------------- szczegoly techniczne (ikona "i" obok opisu)
+# `details` znaleziska to fragment HTML pokazywany w osobnym oknie po nacisnieciu ikony "i".
+# Trafia tu to, co przy zwyklym korzystaniu z programu jest szumem: offsety w pliku, instrukcje,
+# nazwy funkcji gry i to, skad informacja pochodzi. Opis obok pola ma zostac krotki i mowic
+# przede wszystkim, co ustawienie zmienia w grze.
+#
+# Wartoscia moze byc gotowy tekst albo funkcja f(znalezisko) -> tekst. Druga postac pozwala
+# wypisac offsety samego znaleziska zamiast powtarzac je w tekscie, dzieki czemu wersja DOS
+# i Windows moga korzystac z tego samego opisu.
+
+_TBL = "<table border='1' cellpadding='4' cellspacing='0' width='100%'>"
+
+
+def feature_details(ft):
+    """Tekst okna szczegolow znaleziska ('' = znalezisko nie ma szczegolow)."""
+    d = getattr(ft, "details", "")
+    return d(ft) if callable(d) else (d or "")
+
+
+def _details_temple(ft):
+    return (
+        "<p>Z tej listy gra losuje jednostki daru <b>„nowy oddział”</b> (dar 0), tak samo "
+        "w świątyni, w miejscu kultu i w zakopanym skarbie, bo wszystkie trzy trafiają w ten sam "
+        "kod tworzący nowy oddział (zaczyna się pod <code>0x94AFF</code>). Powstaje oddział "
+        "z 1–5 jednostek, a typ każdej z nich jest losowany osobno, więc typy mogą się w jednym "
+        "oddziale powtarzać.</p>"
+        "<p><b>Gdzie to jest w pliku</b></p>"
+        + _TBL +
+        "<tr><th align='left'>Co</th><th align='left'>Offset</th></tr>"
+        f"<tr><td>lista: {ft.size} pozycji po 4 bajty, ID jednostki jako <code>int</code></td>"
+        f"<td><code>0x{ft.offset:X}</code></td></tr>"
+        "<tr><td>liczba losowanych pozycji: operand instrukcji <code>mov edx, N-1</code></td>"
+        f"<td><code>0x{ft.count_instr.value_offset:X}</code></td></tr>"
+        "</table>"
+        "<p>W kodzie leży <b>N-1</b>, bo gra woła <code>Random(0, N-1)</code>; program pokazuje "
+        "i zapisuje zwykłe N. Pozycje powyżej N zostają w pliku nietknięte, więc można je trzymać "
+        "jako zapas i włączyć później, podnosząc „Losowane pozycje”.</p>"
+        "<p><b>Kiedy ta lista nie działa</b></p>"
+        f"<p>W misjach 3 i 7 obu kampanii gra sięga po osobną listę, czyli ustawienie "
+        f"„{TITLE_TEMPLE_MISSION}” poniżej. Zmiany zrobione tutaj nie dotyczą tamtych czterech "
+        "misji.</p>"
+        "<p>Dwie świątynie mają ponadto skład daru wpisany na sztywno. Zawsze jest to taran "
+        "i trzech budowniczych, niezależnie od obu list: w 3. misji kampanii chrześcijańskiej na polu "
+        "(95, 16) i w 3. misji kampanii pogańskiej na polu (58, 77). Tej listy program nie "
+        "udostępnia do zmiany.</p>"
+    )
+
+
+def _details_temple_mission(cmp_offsets=()):
+    """Buduje opis wariantu misyjnego; `cmp_offsets` = porownania w kodzie, jesli sa znane."""
+    def build(ft):
+        rows = "".join(
+            f"<tr><td align='center'><code>{value}</code></td><td>{camp}</td>"
+            f"<td align='center'>{shown}</td><td><code>{mapfile}</code></td><td>{goal}</td></tr>"
+            for value, camp, shown, mapfile, goal in TEMPLE_MISSION_ROWS)
+        code = ""
+        if cmp_offsets:
+            where = ", ".join(f"<code>0x{off:X}</code> (z {v})" for off, v in cmp_offsets)
+            code = ("<p><b>Jak to wygląda w kodzie</b></p>"
+                    f"<p>Cztery kolejne porównania pola <code>0x222F1</code> na początku kodu "
+                    f"tworzącego nowy oddział (<code>0x94AFF</code>): {where}. "
+                    "Trafienie któregokolwiek z nich "
+                    "przestawia losowanie na tę listę; jeśli żadne nie trafi, gra bierze zwykłą "
+                    "listę („Świątynia / miejsce kultu” powyżej).</p>")
+        return (
+            "<p>Gra ma dwie listy jednostek dla daru „nowy oddział” i wybiera między nimi "
+            "<b>po numerze misji</b>, a nie po tym, czyja armia weszła do świątyni. Ta lista "
+            "obowiązuje więc tak samo gracza, jak i komputer.</p>"
+            "<p><b>Pole gry 0x222F1</b></p>"
+            "<p>Trzyma numer misji kampanii <b>liczony od zera</b>: 0–9 to kampania "
+            "chrześcijańska (mapy <code>k_*</code>), 10–19 pogańska (mapy <code>p_*</code>), "
+            "a <code>-1</code> oznacza grę poza kampanią (potyczka albo gra wieloosobowa). "
+            "Numer pokazywany graczowi to <code>numer % 10 + 1</code>, dlatego cztery wartości, "
+            "na które patrzy gra, to misje 3 i 7 obu kampanii:</p>"
+            + _TBL +
+            "<tr><th align='left'>0x222F1</th><th align='left'>Kampania</th>"
+            "<th align='left'>Misja</th><th align='left'>Mapa</th>"
+            "<th align='left'>Cel misji</th></tr>"
+            + rows +
+            "</table>"
+            + code +
+            "<p><b>Gdzie to jest w pliku</b></p>"
+            + _TBL +
+            "<tr><th align='left'>Co</th><th align='left'>Offset</th></tr>"
+            f"<tr><td>lista: {ft.size} pozycji po 4 bajty, ID jednostki jako <code>int</code></td>"
+            f"<td><code>0x{ft.offset:X}</code></td></tr>"
+            "<tr><td>liczba losowanych pozycji: operand instrukcji <code>mov edx, N-1</code></td>"
+            f"<td><code>0x{ft.count_instr.value_offset:X}</code></td></tr>"
+            "</table>"
+            "<p><b>Pułapka przy tabelach darów</b></p>"
+            "<p>W tych samych czterech misjach gracz-człowiek dostaje wyłącznie dar „nowy "
+            "oddział” albo „brak efektu”: gra losuje w pętli, aż trafi na jeden z nich. Jeśli "
+            "w tabeli darów gracza żaden osiągalny wpis nie ma daru 0 ani 15, pętla nigdy się nie "
+            "skończy i gra się zawiesi, dlatego program nie pozwala zapisać takiego pliku.</p>"
+            f"<p>{SRC_MISSIONS}</p>"
+        )
+    return build
+
+
+DETAILS_GIFT_TABLES = (
+    "<p><b>Budowa tabeli</b></p>"
+    "<p>Każdy wpis to 24 bajty: <code>{i32 numer daru, i32 waga, i32 obrazek, 3 × wskaźnik na "
+    "tekst (PL, EN, DE)}</code>, a lista kończy się wpisem z numerem daru <code>-1</code>. "
+    "Cztery tabele leżą w pliku jedna za drugą, dlatego liczby wpisów nie da się zmienić bez "
+    "przenoszenia tabel. Edytowalne są numer daru, waga i obrazek każdego istniejącego wpisu, "
+    "a wpisy można przestawiać. Tekst idzie razem z wpisem wtedy, gdy teksty w tym pliku da "
+    "się zapisać, bo zamiana wpisów to w pliku także zamiana ich wskaźników tekstów.</p>"
+    "<p><b>Gdzie to jest w pliku</b></p>"
+    "<p>Świątynia (gracz): <code>0x16203C</code> (16 wpisów), świątynia (komputer): "
+    "<code>0x16233C</code> (14), miejsce kultu (gracz): <code>0x1621D4</code> (14), "
+    "miejsce kultu (komputer): <code>0x1624A4</code> (12). Tabelę wybiera kod wejścia do "
+    "świątyni (<code>0x95535</code>) po religii właściciela armii i po tym, czy gracz jest "
+    "człowiekiem.</p>"
+    "<p><b>Jak liczona jest szansa</b></p>"
+    "<p>Losowanie (<code>0x9502C</code>) sumuje wagi wszystkich wpisów (S), bierze "
+    "<code>r = Random(0, S-1)</code> i wybiera pierwszy wpis, dla którego suma wag do niego "
+    "włącznie jest ≥ r. <b>Oryginalny błąd:</b> <code>r = 0</code> zawsze trafia w pierwszy wpis, "
+    "więc ma on o jedną szansę więcej, niż wynika z wagi, a ostatni o jedną mniej "
+    "(<code>r</code> nigdy nie dochodzi do S). Kolumna „Szansa” liczy to dokładnie tym samym "
+    "wzorem co gra.</p>"
+    "<p><b>Numer daru a tekst</b></p>"
+    "<p>Tekst należy do wpisu tabeli, a nie do numeru daru. Po zmianie samego efektu komunikat "
+    "w grze zostaje stary. Dlatego ostatnia kolumna pokazuje, co gra naprawdę wypisze.</p>"
+)
+
+
+def _details_gift_amounts(ft):
+    rows = "".join(
+        f"<tr><td align='center'>{a.gift:02d}</td><td>{GIFT_EFFECTS[a.gift][0]}</td>"
+        f"<td>{a.label}</td><td align='center'>{a.lo}&nbsp;…&nbsp;{a.hi}</td>"
+        f"<td><code>0x{a.instr.value_offset:X}</code></td></tr>"
+        for a in sorted(ft.amounts, key=lambda a: (a.gift, a.key)))
+    return (
+        "<p>Gra nie trzyma tych liczb w żadnej tabeli. Są to <b>operandy instrukcji</b> "
+        "w kodzie wykonującym dar (<code>0x950DB</code>: instrukcja wyboru z 16 przypadkami, "
+        "po jednym na numer daru) i w kodzie tworzącym nowy oddział (<code>0x94AFF</code>). "
+        "Dlatego jedna liczba obowiązuje naraz świątynie, miejsca kultu i zakopane skarby, "
+        "a także gracza i komputer.</p>"
+        "<p><b>Co dokładnie jest zmieniane</b></p>"
+        + _TBL +
+        "<tr><th align='left'>Dar</th><th align='left'>Efekt</th><th align='left'>Liczba</th>"
+        "<th align='left'>Zakres</th><th align='left'>Offset</th></tr>"
+        + rows +
+        "</table>"
+        "<p><b>Skąd takie zakresy</b></p>"
+        "<ul>"
+        "<li><b>Złoto</b>: kod pod <code>0x94CCE</code> tworzy oddział ze złotem po 100 sztuk "
+        "na jednostkę, a oddział ma najwyżej 10 jednostek, więc powyżej 1000 reszta przepada.</li>"
+        "<li><b>Morale</b> mieści się w 0–20, a <b>zdrowie</b> i <b>zmęczenie</b> w 0–100. "
+        "Wartości spoza tych zakresów nic by nie dały, bo gra i tak przycina wynik.</li>"
+        "<li><b>Nożyki</b> to liczba obrotów pętli dodającej doświadczenie. Trzy nożyki "
+        "to jeden poziom, a najwyższy poziom to 3, więc 9 wystarcza na pełne doświadczenie.</li>"
+        "</ul>"
+        "<p><b>Dodawane czy wpisywane</b></p>"
+        "<p>Część liczb gra <i>dodaje</i> do obecnej wartości (morale, zmęczenie daru 2 i 14), "
+        "a część <i>wpisuje wprost</i> w pole jednostki (zdrowie i zmęczenie darów 4 i 5). "
+        "Podpowiedź przy każdym polu mówi, który to przypadek.</p>"
+        f"<p><b>Uwaga na zmęczenie.</b> Kod dodający zmęczenie (<code>0x61C1D</code> dla jednej "
+        f"jednostki, <code>0x61CAF</code> dla całego oddziału) dodaje do bajtu ze znakiem "
+        f"i dopiero potem przycina wynik do 0–100, więc dodanie więcej niż "
+        f"{GiftAmounts.TIREDNESS_SAFE_ADD} przekręca bajt jednostkom, które są już zmęczone, "
+        "i zamiast kary daje im zerowe zmęczenie. Ten sam błąd ma oryginalna KSIĘGA PLAG "
+        f"z wartością +50. Poprawka „{TITLE_TIREDNESS_ADD}” na zakładce „Poprawki” to naprawia: "
+        "po jej włączeniu zmęczenie dochodzi do 100 i się zatrzymuje, więc cały zakres tych "
+        "pól działa tak, jak mówi liczba.</p>"
+    )
+
+
+def _details_walls(ft):
+    if ft.offset is None:
+        where = (
+            "<p>Adres tabeli w wersji Windows nie był sprawdzony na pliku, dlatego program szuka "
+            "jej po bajtach rozpoznawczych, czyli trzech wytrzymałościach murów, które w obu wersjach "
+            "gry są takie same (<code>AB 01 00 00 55 01 .. .. 00 01 .. ..</code>). Jeśli znajdzie "
+            "więcej niż jedno takie miejsce, ustawienie zostaje wyłączone.</p>")
+    else:
+        turns = ", ".join(f"<code>0x{ft.turns_offset(ft.offset, l):X}</code>"
+                          for l in sorted(ft.TECH_NEEDED))
+        costs = ", ".join(f"<code>0x{ft.cost_offset(ft.offset, l):X}</code>"
+                          for l in sorted(ft.TECH_NEEDED))
+        where = (
+            f"<p>Tabela zaczyna się w pliku pod <code>0x{ft.offset:X}</code>. Program zmienia "
+            f"tylko cztery bajty: czas pod {turns} i koszt pod {costs}.</p>")
+    return (
+        "<p><b>Budowa tabeli</b></p>"
+        "<p>Trzy wpisy po 4 bajty, po jednym na poziom muru: "
+        "<code>{u16 wytrzymałość x256, u8 tury rozbudowy, u8 koszt rozbudowy}</code>. "
+        "Wytrzymałość, czyli mnożnik obrażeń zadawanych murom w bitwie (427, 341, 256), "
+        "nie jest zmieniana; służy programowi za znacznik rozpoznawczy tabeli.</p>"
+        + where +
+        "<p><b>Które bajty gra w ogóle czyta</b></p>"
+        "<p>Przy rozbudowie z poziomu L kod rozbudowy murów (<code>0x70DD4</code>) czyta wpis "
+        "L+1, a poziom muru jest zawsze mniejszy niż 2, więc gra czyta tylko tury i koszt "
+        "wpisów 1 i 2. Tury i koszt wpisu 0 nie są czytane nigdy, bo nie da się „rozbudować do "
+        "poziomu 0”. Poza tym jednym miejscem żadne inne nie rusza tych bajtów.</p>"
+        "<p><b>Zakresy</b></p>"
+        "<p>Koszt to bajt bez znaku, porównywany ze skarbcem zamku również bez znaku, więc całe "
+        f"{ft.MIN_COST}–{ft.MAX_COST} działa poprawnie. Kod początku tury (<code>0x6F919</code>) "
+        "zmniejsza licznik tur (bajt <code>+0x1AD</code> budynku) o 1 i podnosi "
+        f"poziom muru, gdy dojdzie do zera. Dlatego minimum to {ft.MIN_TURNS} tura, a nie 0: "
+        "przy zerze gra pobrałaby złoto, licznik nigdy by nie wystartował i mur nigdy by się nie "
+        "podniósł.</p>"
+        "<p><b>Bez zmiany tekstów</b></p>"
+        "<p>Menu „Rozbuduj mury”, inaczej niż menu budowy, nie pokazuje ceny, więc nigdzie "
+        "w grze nie zostaje stara liczba i nie trzeba poprawiać żadnego tekstu.</p>"
+    )
+
+
+def _places(n):
+    """miejsce / miejsca / miejsc - odmiana po liczbie miejsc w kodzie."""
+    if n == 1:
+        return "miejscu"
+    return "miejscach"
+
+
+def _details_cost_min(ft):
+    n = len(ft.minimums)
+    mins = ", ".join(f"<code>0x{i.value_offset:X}</code>" for i in ft.minimums)
+    min_label = ("wymagane minimum: operand warunku <code>cmp</code>" if n == 1 else
+                 f"wymagane minimum: {n} × operand warunku <code>cmp</code>")
+    many = ("" if n == 1 else
+            f"<p>Warunek jest sprawdzany w {n} {_places(n)} kodu (gra pyta o to samo w kilku "
+            "miejscach); program zapisuje we wszystkich tę samą liczbę.</p>")
+    if ft.clamped:
+        clamp = ("<p>W tej wersji gry odjęcie jest <b>przycinane</b>, bo gra sama pilnuje, żeby "
+                 "jednostka nie zeszła poniżej zera punktów akcji, więc minimum mniejsze od "
+                 "kosztu jest tu bezpieczne.</p>")
+    else:
+        clamp = ("<p>Gra <b>nie pilnuje tu zera</b>: jeśli ustawisz minimum mniejsze od kosztu, "
+                 "jednostka z małą liczbą punktów akcji zejdzie poniżej zera, bajt się przekręci "
+                 "i zamiast kary dostanie ok. 250 PA. Dlatego program ostrzega przy takim "
+                 "ustawieniu.</p>")
+    extra = ""
+    if ft.key == "ap_join":
+        extra = ("<p><b>Skutek uboczny</b></p>"
+                 "<p>Tej samej funkcji gra używa przy budowaniu armii na starcie scenariusza, "
+                 "dlatego koszt łączenia odejmuje punkty akcji także jednostkom startowym.</p>")
+    return (
+        "<p><b>Dwie różne liczby</b></p>"
+        "<p><b>Koszt</b> to liczba odejmowana od punktów akcji każdej jednostki. "
+        "<b>Wymagane minimum</b> to warunek sprawdzany, zanim gra w ogóle pozwoli na operację. "
+        "W oryginale obie wynoszą 4, ale są to osobne liczby w osobnych miejscach kodu "
+        "i można je ustawić różnie.</p>"
+        "<p><b>Gdzie to jest w pliku</b></p>"
+        + _TBL +
+        "<tr><th align='left'>Co</th><th align='left'>Offset</th></tr>"
+        "<tr><td>koszt: operand instrukcji, z której gra bierze tę liczbę</td>"
+        f"<td><code>0x{ft.cost.value_offset:X}</code></td></tr>"
+        f"<tr><td>{min_label}</td><td>{mins}</td></tr>"
+        "</table>"
+        + many +
+        "<p><b>Co się dzieje przy zbyt małym minimum</b></p>"
+        + clamp + extra +
+        f"<p>Dopuszczalny zakres obu liczb: {ft.lo}–{ft.hi}.</p>"
+    )
+
+
+def _details_codepatch(how=""):
+    """Buduje opis poprawki kodu; `how` = o tym, jak poprawka jest zrobiona.
+
+    `how` moze byc zwyklym tekstem jednego akapitu albo gotowym HTML-em (gdy zaczyna sie od
+    znacznika) - wtedy wchodzi bez zmian, zeby zmiescic takze listingi bajtow w <pre>."""
+    how_html = how if how.lstrip().startswith("<") else f"<p>{how}</p>"
+
+    def build(ft):
+        rows = "".join(
+            f"<tr><td><code>0x{off:X}</code></td><td align='center'>{len(new)} B</td>"
+            f"<td>{'wolne miejsce (w oryginale same zera)' if not any(orig) else 'bajty oryginalnego pliku'}</td>"
+            "</tr>"
+            for off, orig, new in ft.sites)
+        return (
+            "<p><b>Zmieniane miejsca w pliku</b></p>"
+            + _TBL +
+            "<tr><th align='left'>Offset</th><th align='left'>Długość</th>"
+            "<th align='left'>Co tam jest w oryginale</th></tr>"
+            + rows +
+            "</table>"
+            "<p>Przełącznik wpisuje nowe bajty albo przywraca oryginalne, zawsze wszystkie miejsca "
+            "naraz. Przy wczytaniu pliku program sprawdza, czy każde z nich jest w tym samym "
+            "stanie; jeśli nie, poprawka zostaje wyłączona, żeby nie nadpisać cudzych zmian.</p>"
+            + (f"<p><b>Jak to jest zrobione</b></p>{how_html}" if how else "")
+        )
+    return build
 
 DESC_GIFT_TEXTS = (
     'Tekst pokazywany w okienku daru należy do wpisu tabeli, nie do numeru daru: po zmianie efektu '
     'komunikat zostaje stary, więc trzeba go poprawić tutaj. Wszystkie teksty czterech tabel leżą '
-    'w pliku w jednym ciągu, jeden za drugim – dlatego mają wspólny limit miejsca, a nie własną '
+    'w pliku w jednym ciągu, jeden za drugim, dlatego mają wspólny limit miejsca, a nie własną '
     'długość każdy. Program ułoży je przy zapisie od nowa (powtarzające się zapisze raz) '
     'i poprawi wskaźniki wpisów razem z wpisami relokacji, z których loader gry bierze adresy.'
 )
@@ -1246,10 +1695,10 @@ DESC_GIFT_TEXTS = (
 
 def _dos_gift_tables():
     return [
-        GiftTable("gifts_christian_human", "Świątynia – gracz", 0x16203C, DOS_TEXT_DELTA, True),
-        GiftTable("gifts_christian_ai", "Świątynia – komputer", 0x16233C, DOS_TEXT_DELTA, False),
-        GiftTable("gifts_pagan_human", "Miejsce kultu – gracz", 0x1621D4, DOS_TEXT_DELTA, True),
-        GiftTable("gifts_pagan_ai", "Miejsce kultu – komputer", 0x1624A4, DOS_TEXT_DELTA, False),
+        GiftTable("gifts_christian_human", "Świątynia (gracz)", 0x16203C, DOS_TEXT_DELTA, True),
+        GiftTable("gifts_christian_ai", "Świątynia (komputer)", 0x16233C, DOS_TEXT_DELTA, False),
+        GiftTable("gifts_pagan_human", "Miejsce kultu (gracz)", 0x1621D4, DOS_TEXT_DELTA, True),
+        GiftTable("gifts_pagan_ai", "Miejsce kultu (komputer)", 0x1624A4, DOS_TEXT_DELTA, False),
     ]
 
 
@@ -1259,21 +1708,21 @@ _DOS_GIFT_TABLES = _dos_gift_tables()
 def _dos_gift_amounts():
     """Liczby darow wpisane w kod wersji DOS (offsety w pliku; kod = adres w pamieci + 0x39400)."""
     return GiftAmounts("gift_amounts", "Siła darów świątyń i miejsc kultu", [
-        # Gift_NewTroops 0x5B6FF: Random(1,5) -> mov edx,5 / mov eax,1
+        # Kod tworzacy nowy oddzial 0x94AFF: losowanie 1-5 -> mov edx,5 / mov eax,1
         GiftAmount("troops_max", 0, "najwięcej jednostek", Instr32(0x94B1E, "BA"), 1, 10),
         GiftAmount("troops_min", 0, "najmniej jednostek", Instr32(0x94B23, "B8"), 1, 10),
-        # Temple_ProcessGift 0x5BCDB, kolejne przypadki instrukcji wyboru
+        # Kod wykonujacy dar 0x950DB, kolejne przypadki instrukcji wyboru
         GiftAmount("tired2", 2, "zmęczenie", Instr32(0x95161, "BA"), -100, 100,
-                   note="Unit_AddTiredness: wartość dodawana, wynik przycięty do 0–100."),
+                   note="Wartość dodawana, wynik przycięty do 0–100."),
         GiftAmount("morale3", 3, "morale", Instr32(0x951A8, "BA"), -20, 20,
-                   note="Unit_AddMorale: wartość dodawana, wynik przycięty do 0–20."),
+                   note="Wartość dodawana, wynik przycięty do 0–20."),
         GiftAmount("health4", 4, "zdrowie", Instr(0x95218, "C6400F"), 0, 100,
                    note="Wpisywane wprost w pole zdrowia każdej jednostki (nie dodawane)."),
         GiftAmount("health5", 5, "zdrowie", Instr(0x95289, "C6400F"), 0, 100),
         GiftAmount("tired5", 5, "zmęczenie", Instr(0x95294, "C64010"), 0, 100,
                    note="Wpisywane wprost w pole zmęczenia (nie dodawane)."),
         GiftAmount("exp6", 6, "nożyki", Instr(0x952E6, "837DE0"), 0, 99,
-                   note="Liczba obrotów pętli Unit_AddExperience. 3 nożyki = 1 poziom, "
+                   note="Liczba obrotów pętli dodającej doświadczenie. 3 nożyki = 1 poziom, "
                         "najwyższy poziom to 3, więc 9 wystarcza na pełne doświadczenie."),
         GiftAmount("morale7", 7, "morale", Instr32(0x95330, "BA"), -20, 20),
         GiftAmount("exp8", 8, "nożyki", Instr(0x95381, "837DDC"), 0, 99),
@@ -1284,24 +1733,23 @@ def _dos_gift_amounts():
         GiftAmount("morale13", 13, "morale", Instr32(0x9543F, "BA"), -20, 20),
         GiftAmount("morale14", 14, "morale", Instr32(0x95486, "BA"), -20, 20),
         GiftAmount("tired14", 14, "zmęczenie", Instr32(0x95498, "BA"), -100, 100),
-    ], note="Złoto: Gift_Gold (0x5B8CE) tworzy oddział ze złotem po 100 sztuk na jednostkę, "
-            "a oddział ma najwyżej 10 jednostek – dlatego maksimum to 1000. "
-            "Morale mieści się w 0–20, zdrowie i zmęczenie w 0–100, więc wartości poza tymi "
-            "zakresami nic by nie dawały.")
+    ], note="Zakresy są dobrane tak, żeby wartość dało się w grze naprawdę osiągnąć, "
+            "bo wyżej gra i tak przycina wynik.",
+       details=_details_gift_amounts)
 
 
 PROFILES = {
     "dos_pl": {
-        "name": "Clash – wersja DOS (CLASH.EXE, polska)",
+        "name": "Clash: wersja DOS (CLASH.EXE, polska)",
         "size": 1481338,
         "features": [
             UnitDwordList("temple", "Świątynia / miejsce kultu", 0x161FFC, 5,
                           Instr(0x94C41, "BA"),
-                          note="Losowana jest jedna z aktywnych pozycji (każda z równą szansą)."),
-            UnitDwordList("temple_mission", "Świątynia – wariant w wybranych misjach", 0x162010, 7,
-                          Instr(0x94C13, "BA"),
-                          note="Używany zamiast zwykłej listy, gdy pole gry 0x222F1 ma wartość 2, 6, 12 lub 16 "
-                               "(najpewniej numer/typ misji)."),
+                          note="Losowana jest jedna z aktywnych pozycji (każda z równą szansą).",
+                          details=_details_temple),
+            UnitDwordList("temple_mission", TITLE_TEMPLE_MISSION, 0x162010, 7,
+                          Instr(0x94C13, "BA"), note=NOTE_TEMPLE_MISSION,
+                          details=_details_temple_mission(TEMPLE_MISSION_CMP_DOS)),
             *_DOS_GIFT_TABLES,
             GiftTexts("gift_texts", "Teksty darów świątyń i miejsc kultu", _DOS_GIFT_TABLES,
                       DOS_GIFT_POOL, DOS_TEXT_DELTA),
@@ -1310,18 +1758,19 @@ PROFILES = {
             UnitByteSet("forge", "Wymaga kuźni", 0x161F7C, 12),
             UnitByteSet("workshop", "Wymaga warsztatu", 0x161F88, 12),
             TechTable("tech", "Minimalny poziom zaawansowania", 0x15E7D4),
-            WallTable("walls", "Mury – koszt i czas rozbudowy", 0x15FDD8,
-                      note="Tabela 0x1339D8 w pamięci gry. Zmieniane są tylko cztery bajty: "
-                           "czas 0x15FDDE i 0x15FDE2, koszt 0x15FDDF i 0x15FDE3."),
+            WallTable("walls", "Mury: koszt i czas rozbudowy", 0x15FDD8,
+                      details=_details_walls),
             CostWithMinimum("ap_split", "Dzielenie oddziału / przenoszenie części jednostek",
                             Instr(0x74DAA, "806808"),
                             [Instr(0x74A46, "83F8"), Instr(0x74A9D, "83F8"),
                              Instr(0x751F1, "83F8")],  # kolor krzyzyka na ikonce jednostki (dolny pasek)
-                            clamped=False, note=NOTE_SPLIT_ICON),
+                            clamped=False, note=NOTE_SPLIT_ICON,
+                            details=_details_cost_min),
             CostWithMinimum("ap_join", "Dołączenie całego oddziału do innego",
                             Instr(0x7485D, "BA"), [Instr(0x7484F, "83F8")], clamped=False,
                             note="Tej samej funkcji gra używa przy budowaniu armii na starcie scenariusza, "
-                                 "dlatego koszt łączenia odejmuje PA także jednostkom startowym."),
+                                 "dlatego koszt łączenia odejmuje PA także jednostkom startowym.",
+                            details=_details_cost_min),
             EntrenchBonus("entrench", "Premia do obrony za okopanie", [
                 # add dword [ebp-0Ch], N ; jmp short +11h  (zamiast mnozenia x1,25)
                 (0x5FE74, "6955F440010000 89D0 C1FA1F C1E208 1BC2 C1F808 8945F4", "8345F4NN EB11"),
@@ -1329,7 +1778,7 @@ PROFILES = {
             ]),
             CodePatch("no_ground_on_fly", "Naziemne nie dołączają do latających nad niedostępnym terenem", [
                 (0x2D54, "1A240F00", "00260F00"),                       # rozmiar obiektu kodu w LE
-                (0x74847, "8B45E4E8A5A4FEFF", "E854700C00909090"),      # Unit_AddToGroup
+                (0x74847, "8B45E4E8A5A4FEFF", "E854700C00909090"),      # dolaczanie do oddzialu
                 (0x74A92, "8D85FCFCFFFFE857A2FEFF", "E8396E0C00909090909090"),  # przenoszenie do sasiada
                 (0x13B820, None,
                  "51525356575583EC6089D689DF89C289E0E8EC79F2FFE8000000005D69C6780500006BCF0E01C88B8DC887F2FF"
@@ -1337,46 +1786,58 @@ PROFILES = {
                  "0E8B850A88F2FF8B0C880FB6440C1E83C4605D5F5E5B5A59C30000000000000000000000000000837DFC0075"
                  "1C538B45E80FBF100FBF58028B45E4E867FFFFFF5B85C0750483C8FFC38B45E4E92A34F2FF00000000000053"
                  "8D85FCFCFFFF8B55F88B5DFCE83EFFFFFF5B85C0750483C8FFC38D85FCFCFFFFE9FE33F2FF"),
-            ], description=DESC_NO_GROUND_ON_FLY, note='Nowy kod (procedura liczenia kosztu terenu + 2 wstawki) leży w wolnym miejscu na końcu sekcji kodu (0x13B820); rozmiar sekcji w nagłówku LE (0x2D54) jest powiększany, żeby DOS/4GW go wczytał.'),
+            ], description=DESC_NO_GROUND_ON_FLY, details=_details_codepatch(
+                'Nowy kod, czyli procedura liczenia kosztu terenu i dwie wstawki wołające ją z miejsc, '
+                'w których gra dołącza jednostki do oddziału, leży w wolnym miejscu na końcu '
+                'sekcji kodu (<code>0x13B820</code>). Rozmiar sekcji w nagłówku LE '
+                '(<code>0x2D54</code>) jest powiększany, żeby DOS/4GW wczytał ją razem z nowym '
+                'kodem. Adresy zmiennych gry nowy kod czyta z operandów istniejących instrukcji '
+                '(<code>0x2AC03</code>, <code>0x2AC31</code>, <code>0x2AC45</code>), bo DOS/4GW '
+                'relokuje dane, a dopisany kod nie ma własnych wpisów relokacji. Źródło '
+                'asemblerowe: <code>tools/build_nofly_patch.py</code>.')),
+            # bajtowy add + dwa przyciecia -> suma w 32 bitach; bajty: _TIREDNESS_SITES wyzej
+            CodePatch("tiredness_add", TITLE_TIREDNESS_ADD, _tiredness_sites(),
+                      description=DESC_TIREDNESS_ADD, details=_details_codepatch(HOW_TIREDNESS_ADD)),
             CheatTable("cheats", "Kody", _cheats([
                 (0x14CCE3, 6), (0x14CCEA, 10), (0x14CCF5, 10), (0x14CD00, 7), (0x14CD08, 10),
                 (0x14CD13, 12), (0x14CD20, 15), (0x14CD30, 7), (0x14CD38, 8), (0x14CD41, 4), (0x14CD46, 4)])),
         ],
     },
     "win95": {
-        "name": "Clash – wersja Windows (clash95.exe)",
+        "name": "Clash: wersja Windows (clash95.exe)",
         "size": 1232384,
         "features": [
             UnitDwordList("temple", "Świątynia / miejsce kultu", 0x113F10, 5, Instr(0x3F17D, "BA"),
-                          note="Losowana jest jedna z aktywnych pozycji (każda z równą szansą)."),
-            UnitDwordList("temple_mission", "Świątynia – wariant w wybranych misjach", 0x113F24, 7,
-                          Instr(0x3F149, "BA"),
-                          note="Używany zamiast zwykłej listy, gdy pole gry 0x222F1 ma wartość 2, 6, 12 lub 16."),
+                          note="Losowana jest jedna z aktywnych pozycji (każda z równą szansą).",
+                          details=_details_temple),
+            UnitDwordList("temple_mission", TITLE_TEMPLE_MISSION, 0x113F24, 7,
+                          Instr(0x3F149, "BA"), note=NOTE_TEMPLE_MISSION,
+                          details=_details_temple_mission()),
             UnitDwordList("port", "Port", 0x115DA8, 12, Instr(0x42B09, "BA")),
             UnitByteSet("forge", "Wymaga kuźni", 0x113E80, 16),
             UnitByteSet("workshop", "Wymaga warsztatu", 0x113E90, 12),
             TechTable("tech", "Minimalny poziom zaawansowania", 0x110768),
-            WallTable("walls", "Mury – koszt i czas rozbudowy",
-                      note="Adres tabeli murów w wersji Windows nie był sprawdzony na pliku, dlatego program "
-                           "szuka jej po bajtach rozpoznawczych (AB 01 00 00 55 01 .. .. 00 01 .. ..) – "
-                           "wytrzymałości murów są w obu wersjach te same. Jeśli znajdzie więcej niż jedno "
-                           "takie miejsce, ustawienie zostaje wyłączone."),
+            WallTable("walls", "Mury: koszt i czas rozbudowy",
+                      note="W tej wersji gry program sam odnajduje tabelę murów w pliku.",
+                      details=_details_walls),
             CostWithMinimum("ap_split", "Dzielenie oddziału / przenoszenie części jednostek",
                             Instr(0x225EF, "806808"),
                             [Instr(0x22398, "83F8"), Instr(0x223D0, "83F8"),
                              Instr(0x22AC7, "83F8")],  # kolor krzyzyka na ikonce jednostki (dolny pasek)
-                            clamped=False, note=NOTE_SPLIT_ICON),
+                            clamped=False, note=NOTE_SPLIT_ICON,
+                            details=_details_cost_min),
             CostWithMinimum("ap_join", "Dołączenie całego oddziału do innego",
                             Instr(0x22141, "BA"), [Instr(0x22124, "83F8")], clamped=True,
                             note="Tej samej funkcji gra używa przy budowaniu armii na starcie scenariusza, "
-                                 "dlatego koszt łączenia odejmuje PA także jednostkom startowym."),
+                                 "dlatego koszt łączenia odejmuje PA także jednostkom startowym.",
+                            details=_details_cost_min),
             EntrenchBonus("entrench", "Premia do obrony za okopanie", [
                 # add ebx, N ; jmp short +16h
                 (0x105DC, "8D149D00000000 01DA C1E206 89D0 C1FA1F C1E208 1BC2 C1F808 89C3", "83C3NN EB16"),
             ]),
             CodePatch("no_ground_on_fly", "Naziemne nie dołączają do latających nad niedostępnym terenem", [
-                (0x22076, "85DB0F859D000000", "E8756C0C00909090"),      # Unit_AddToGroup: start scenariusza
-                (0x2211B, "8B442408E8ECD2FEFF", "E8706B0C0090909090"),  # Unit_AddToGroup: sprawdzenie
+                (0x22076, "85DB0F859D000000", "E8756C0C00909090"),      # dolaczanie do oddzialu: start scenariusza
+                (0x2211B, "8B442408E8ECD2FEFF", "E8706B0C0090909090"),  # dolaczanie do oddzialu: sprawdzenie
                 (0x223C9, "89E0E840D0FEFF", "E8F2680C009090"),          # przenoszenie do sasiada
                 (0xE8C20, None,
                  "515253565783EC6089D689DF89C289E0E8EBA0F2FF69C6780500006BCF0E01C80305E402520066837804FF74"
@@ -1385,7 +1846,9 @@ PROFILES = {
                  "C0750483C8FFC38B44240CE95C67F2FF000000000000000000000000538D4424088B9424EC0200008B9C24E8"
                  "020000E848FFFFFF5B85C0750483C8FFC38D442404E92667F2FF00000000000085DB741183C4048B442408E8"
                  "1067F2FFE91F94F3FFC3"),
-            ], description=DESC_NO_GROUND_ON_FLY, note='Nowy kod leży w wolnym miejscu na końcu sekcji kodu AUTO (0xE8C20, adres 0x4E9820).'),
+            ], description=DESC_NO_GROUND_ON_FLY, details=_details_codepatch(
+                'Nowy kod leży w wolnym miejscu na końcu sekcji kodu AUTO '
+                '(<code>0xE8C20</code> w pliku, adres <code>0x4E9820</code> w pamięci gry).')),
             CheatTable("cheats", "Kody", _cheats([
                 (0xFDA3A, 6), (0xFDA41, 10), (0xFDA4C, 10), (0xFDA57, 7), (0xFDA5F, 10),
                 (0xFDA6A, 12), (0xFDA77, 15), (0xFDA87, 7), (0xFDA8F, 8), (0xFDA98, 4), (0xFDA9D, 4)])),
