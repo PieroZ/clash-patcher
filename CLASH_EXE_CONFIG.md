@@ -191,6 +191,13 @@ Tabele leżą w pliku jedna za drugą, więc **liczby wpisów nie da się zmieni
 tabel i dopisywania relokacji. Edytowalne są numer daru, obrazek i waga każdego istniejącego wpisu;
 waga 0 praktycznie wyłącza wpis.
 
+Kolejność wpisów można zmieniać strzałkami w kolumnie „Kolejność” (zamiana z sąsiednim wpisem).
+Program zamienia wtedy dar, obrazek i wagę, a gdy edycja tekstów jest dostępna, także teksty wpisu,
+które przy zapisie trafiają na nowe miejsca tak samo jak tekst zmieniony ręcznie (patrz niżej).
+Jeśli tekstów w danym pliku zmienić nie można, zostają na swoich miejscach, bo kolumna z tekstem ma
+pokazywać to, co gra naprawdę wypisze. Dla gry kolejność ma znaczenie tylko na brzegach tabeli:
+pierwszy wpis dostaje jedną szansę więcej, a ostatni jedną mniej (patrz „Losowanie i dokładne szanse”).
+
 Numer daru nie ma nic wspólnego z tekstem wpisu. Po zmianie efektu komunikat w grze zostaje stary.
 Dlatego ostatnia kolumna tabeli pokazuje tekst, który gra naprawdę wypisze, a przycisk „Zmień…”
 pozwala go poprawić (jak, o tym w następnym punkcie).

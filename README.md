@@ -20,7 +20,8 @@ Obsługiwane wersje (rozpoznawane po rozmiarze pliku):
 - **Świątynia i port**: jakie jednostki można wylosować (także osobna lista, z której świątynie
   losują w misjach 3 i 7 obu kampanii),
   wszystkie dary świątyń i miejsc kultu (co, z jakim prawdopodobieństwem i z jakim przedmiotem –
-  osobno dla obu religii oraz dla gracza i komputera) i siła każdego daru (złoto, morale, zmęczenie,
+  osobno dla obu religii oraz dla gracza i komputera, z możliwością przestawiania kolejności wpisów
+  strzałkami) i siła każdego daru (złoto, morale, zmęczenie,
   zdrowie, doświadczenie, liczba jednostek w nowym oddziale).
 - **Opisy darów**: treść komunikatu, który gra pokazuje w okienku daru świątyni i miejsca kultu
   (osobno polski i angielski, przycisk „Zmień…” w tabeli darów). Program pokazuje na bieżąco, jak gra

@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QMessageBox, QToolBar, QScrollArea, QPlainTextEdit, QDialog, QDialogButtonBox,
     QToolButton, QTextBrowser, QStyle, QStyleOptionGroupBox,
 )
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QColor, QPalette
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import clash_exe_patches as cp
@@ -41,10 +41,23 @@ def scrolled(widget):
     return sa
 
 
+def secondary_style():
+    """Styl szarego tekstu pomocniczego.
+
+    W jasnym motywie to palette(mid), ale w ciemnym ten kolor jest prawie taki sam jak tlo
+    (Windows 11: #282828 na #1e1e1e), wiec tam bierzemy kolor posredni miedzy tekstem a tlem."""
+    pal = QApplication.palette()
+    fg, bg = pal.color(QPalette.WindowText), pal.color(QPalette.Window)
+    if bg.lightness() >= fg.lightness():
+        return "color: palette(mid);"
+    mix = QColor(*(round(0.6 * f + 0.4 * b) for f, b in zip(fg.getRgb()[:3], bg.getRgb()[:3])))
+    return f"color: {mix.name()};"
+
+
 def note_label(text):
     lbl = QLabel(text)
     lbl.setWordWrap(True)
-    lbl.setStyleSheet("color: palette(mid);")
+    lbl.setStyleSheet(secondary_style())
     return lbl
 
 
@@ -206,9 +219,10 @@ class DwordListBox(QGroupBox):
 
 def fit_table_height(table):
     """Tabela pokazuje wszystkie wiersze naraz - przewija ja dopiero zakladka.
+    Wiersze maja zwykla wysokosc (jak w tabeli kuzni): bez resizeRowsToContents, bo przed pokazaniem
+    okna kolumna tekstu jest waska i zawiniety tekst robil wiersze kilka razy wyzsze.
     Bez gornego ograniczenia: gdy wyliczona wysokosc okaze sie za mala, zostanie puste miejsce,
     a nie obciety wiersz."""
-    table.resizeRowsToContents()
     h = table.horizontalHeader().height() + 2 * table.frameWidth() + 2
     for r in range(table.rowCount()):
         h += table.rowHeight(r)
@@ -352,7 +366,7 @@ class GiftTextDialog(QDialog):
 
 class GiftTableBox(QWidget):
     """Jedna z czterech tabel losowania darow: numer daru, przedmiot i waga kazdego wpisu."""
-    COL_NO, COL_GIFT, COL_SPRITE, COL_WEIGHT, COL_CHANCE, COL_TEXT, COL_EDIT = range(7)
+    COL_NO, COL_MOVE, COL_GIFT, COL_SPRITE, COL_WEIGHT, COL_CHANCE, COL_TEXT, COL_EDIT = range(8)
 
     def __init__(self, feature, entries, on_change, owner=None):
         super().__init__()
@@ -365,24 +379,26 @@ class GiftTableBox(QWidget):
         self.orig_texts = [list(e["texts"]) for e in entries]
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        self.table = QTableWidget(self.n, 7)
+        self.table = QTableWidget(self.n, 8)
         self.table.setHorizontalHeaderLabels(
-            ["#", "Dar (co się stanie)", "Przedmiot (obrazek i dźwięk)", "Waga", "Szansa",
-             "Tekst w grze (polski)", ""])
+            ["#", "Kolejność", "Dar (co się stanie)", "Przedmiot (obrazek i dźwięk)", "Waga",
+             "Szansa", "Tekst w grze (polski)", ""])
         self.table.verticalHeader().setVisible(False)
+        self.table.setWordWrap(False)   # tekst w jednym wierszu (skrocony „…”), calosc w podpowiedzi
         self.table.cellDoubleClicked.connect(self._cell_double_clicked)
         hh = self.table.horizontalHeader()
         hh.setSectionResizeMode(self.COL_TEXT, QHeaderView.Stretch)
-        for c in (self.COL_NO, self.COL_GIFT, self.COL_SPRITE, self.COL_WEIGHT, self.COL_CHANCE,
-                  self.COL_EDIT):
+        for c in (self.COL_NO, self.COL_MOVE, self.COL_GIFT, self.COL_SPRITE, self.COL_WEIGHT,
+                  self.COL_CHANCE, self.COL_EDIT):
             hh.setSectionResizeMode(c, QHeaderView.ResizeToContents)
-        self.gifts, self.sprites, self.weights = [], [], []
+        self.gifts, self.sprites, self.weights, self.movers = [], [], [], []
         for i in range(self.n):
             off = feature.entry_offset(i)
             num = read_only_item(str(i + 1))
             num.setToolTip(f"offsety w pliku: dar 0x{off:X}, waga 0x{off + 4:X}, "
                            f"obrazek 0x{off + 8:X}, wskaźniki tekstów 0x{off + 12:X}")
             self.table.setItem(i, self.COL_NO, num)
+            self.table.setCellWidget(i, self.COL_MOVE, self._move_cell(i))
             cb_gift = QComboBox()
             for gid in sorted(cp.GIFT_EFFECTS):
                 cb_gift.addItem(cp.gift_label(gid), gid)
@@ -421,22 +437,78 @@ class GiftTableBox(QWidget):
         self.warn.setStyleSheet("color: #c0392b;")
         lay.addWidget(self.warn)
 
+    def _move_cell(self, i):
+        """Przyciski w gore / w dol: zamieniaja wpis z sasiednim."""
+        what = ("dar, przedmiot, wagę i tekst" if self.owner is not None else
+                "dar, przedmiot i wagę (tekstów w tym pliku zmienić nie można, więc zostają "
+                "na swoich miejscach)")
+        cell = QWidget()
+        cl = QHBoxLayout(cell)
+        cl.setContentsMargins(2, 0, 2, 0)
+        cl.setSpacing(2)
+        cl.setAlignment(Qt.AlignCenter)
+        pair = []
+        for arrow, step, name, where in ((Qt.UpArrow, -1, "w górę", "powyżej"),
+                                         (Qt.DownArrow, 1, "w dół", "poniżej")):
+            btn = QToolButton()
+            btn.setArrowType(arrow)
+            btn.setToolTip(f"Zamienia ten wpis z wpisem {where}: {what}")
+            btn.setAccessibleName(f"Wpis {i + 1}: przesuń {name}")
+            btn.setEnabled(0 <= i + step < self.n)
+            btn.clicked.connect(lambda _=False, row=i, s=step: self.move(row, s))
+            cl.addWidget(btn)
+            pair.append(btn)
+        self.movers.append(pair)
+        return cell
+
     # --- dane
+    def _row(self, i):
+        return self.gifts[i].currentData(), self.sprites[i].currentData(), self.weights[i].value()
+
+    def _set_row(self, i, gift, sprite, weight):
+        self.gifts[i].setCurrentIndex(self.gifts[i].findData(gift))
+        idx = self.sprites[i].findData(sprite)
+        if idx < 0:                          # obrazek, ktorego nie ma na liscie - dopisz go
+            self.sprites[i].addItem(cp.artefact_label(sprite), sprite)
+            idx = self.sprites[i].findData(sprite)
+        self.sprites[i].setCurrentIndex(idx)
+        self.weights[i].setValue(weight)
+
     def load(self, entries):
         self._loading = True
         for i, e in enumerate(entries[:self.n]):
-            self.gifts[i].setCurrentIndex(self.gifts[i].findData(e["gift"]))
-            idx = self.sprites[i].findData(e["sprite"])
-            if idx < 0:                      # obrazek, ktorego nie ma na liscie - dopisz go
-                self.sprites[i].addItem(cp.artefact_label(e["sprite"]), e["sprite"])
-                idx = self.sprites[i].findData(e["sprite"])
-            self.sprites[i].setCurrentIndex(idx)
-            self.weights[i].setValue(e["weight"])
+            self._set_row(i, e["gift"], e["sprite"], e["weight"])
             self.texts[i] = list(e["texts"])
             self.orig_texts[i] = list(e["texts"])
             self.show_text(i)
         self._loading = False
         self._update()
+
+    def move(self, i, step):
+        """Zamienia wpis `i` z sasiednim (`step` -1: z wyzszym, +1: z nizszym).
+
+        Tekst przechodzi razem z wpisem tylko wtedy, gdy teksty da sie zapisac - inaczej zostaje
+        na miejscu, bo ostatnia kolumna ma pokazywac to, co gra naprawde wypisze."""
+        j = i + step
+        if not 0 <= j < self.n:
+            return
+        a, b = self._row(i), self._row(j)
+        self._loading = True
+        self._set_row(i, *b)
+        self._set_row(j, *a)
+        if self.owner is not None:
+            for rows in (self.texts, self.orig_texts):
+                rows[i], rows[j] = rows[j], rows[i]
+            self.show_text(i)
+            self.show_text(j)
+        self._loading = False
+        self._update()
+        # zaznaczenie i fokus ida za przesunietym wpisem, wiec kolejne naciskanie spacji
+        # przesuwa go dalej
+        self.table.selectRow(j)
+        btn = self.movers[j][0 if step < 0 else 1]
+        (btn if btn.isEnabled() else self.movers[j][1 if step < 0 else 0]).setFocus()
+        self.on_change()
 
     def show_text(self, i):
         pl, en = self.texts[i][0], self.texts[i][1]
@@ -521,7 +593,10 @@ class GiftsBox(QGroupBox):
                   "Liczba wpisów jest stała, bo tabele leżą w pliku jedna za drugą, więc nie da się "
                   "dopisać nowej pozycji. Można jednak zmienić każdemu wpisowi dar (efekt), "
                   "przedmiot, wagę i tekst, a waga 0 praktycznie go wyłącza. Jednostki, które "
-                  "daje dar „nowy oddział”, ustawia się w dwóch listach powyżej.")
+                  "daje dar „nowy oddział”, ustawia się w dwóch listach powyżej.",
+                  "Strzałki w kolumnie „Kolejność” zamieniają wpis z sąsiednim, razem z jego "
+                  "tekstem. Kolejność zmienia szanse tylko na brzegach tabeli: pierwszy wpis ma "
+                  "o jedną szansę więcej, niż wynika z jego wagi, a ostatni o jedną mniej.")
             + (paras(cp.DESC_GIFT_TEXTS) if self.texts_ft else "")
             + cp.DETAILS_GIFT_TABLES)
         if not self.texts_ft:
@@ -589,7 +664,7 @@ class GiftsBox(QGroupBox):
             f"Teksty darów zajmują {used} z {pool} bajtów wspólnego obszaru w pliku"
             + (f", trzeba skrócić je o {used - pool} B." if used > pool else
                f" (wolne {pool - used} B)."))
-        self.budget.setStyleSheet("color: #c0392b;" if used > pool else "color: palette(mid);")
+        self.budget.setStyleSheet("color: #c0392b;" if used > pool else secondary_style())
         return used <= pool
 
     def load(self, exe):
@@ -697,8 +772,8 @@ class GiftAmountsBox(QGroupBox):
                if k in self.spins and self.spins[k].value() > cp.GiftAmounts.TIREDNESS_SAFE_ADD]
         if big and not self.tiredness_fixed():
             msgs.append(f"Dodanie więcej niż {cp.GiftAmounts.TIREDNESS_SAFE_ADD} zmęczenia przekręca "
-                        "bajt ze znakiem: jednostki, które są już zmęczone, zamiast kary dostaną "
-                        "zerowe zmęczenie (ten błąd ma też oryginalna KSIĘGA PLAG z +50). "
+                        "bajt ze znakiem: jednostki, które są już zmęczone,\nzamiast kary dostaną "
+                        "zerowe zmęczenie (ten błąd ma też oryginalna KSIĘGA PLAG z +50).\n"
                         f"Naprawia to poprawka „{cp.TITLE_TIREDNESS_ADD}” na zakładce „Poprawki”.")
         self.warn.setText(" ".join(msgs))
         return ok
@@ -1295,7 +1370,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.exe = None
         self.dirty = False
-        self.resize(900, 760)
+        self.resize(1280, 864)
         tb = QToolBar("Plik")
         self.addToolBar(tb)
         for text, slot in (("Otwórz…", self.open_dialog), ("Zapisz", self.save),
